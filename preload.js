@@ -28,4 +28,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Shell actions
   openFile:     (p) => ipcRenderer.invoke('shell:open',       p),
   showInFolder: (p) => ipcRenderer.invoke('shell:showFolder', p),
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+
+  // Download
+  selectDownloadFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
+  downloadUrl: (params) => ipcRenderer.invoke('download:start', params),
+  cancelDownload: () => ipcRenderer.send('download:cancel'),
+  onDownloadProgress: (cb) => ipcRenderer.on('download:progress', (_e, d) => cb(d)),
+  removeDownloadListener: () => {
+    ipcRenderer.removeAllListeners('download:progress');
+  },
 });

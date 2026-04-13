@@ -278,20 +278,265 @@ ipcMain.handle('dialog:openFile', async () => {
 // ─── Shell actions ────────────────────────────────────────────────────────────
 ipcMain.handle('shell:open',       async (_e, p) => await shell.openPath(p));
 ipcMain.handle('shell:showFolder', async (_e, p) => shell.showItemInFolder(p));
+ipcMain.handle('shell:openExternal', async (_e, url) => await shell.openExternal(url));
+
+// Folder picker
+ipcMain.handle('dialog:selectFolder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select download folder',
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
+
+// Download system
+let activeDownload = null;
+
+ipcMain.on('download:cancel', () => {
+  if (activeDownload) {
+    activeDownload.cancelled = true;
+    if (activeDownload.proc) { try { activeDownload.proc.kill('SIGTERM'); } catch {} }
+    if (activeDownload.requests) { activeDownload.requests.forEach(req => { try { req.destroy(); } catch {} }); }
+  }
+});
+
+ipcMain.handle('download:start', async (event, { url, savePath, threads, quality }) => {
+  const emit = (data) => event.sender.send('download:progress', data);
+  activeDownload = { cancelled: false, proc: null, requests: [] };
+  try {
+    const isVideo = /(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com|twitter\.com|x\.com|facebook\.com|t\.me|telegram\.)/i.test(url);
+    if (isVideo) return await downloadWithYtdlp(url, savePath, emit, activeDownload, quality || '1080');
+    else return await downloadDirect(url, savePath, threads || 4, emit, activeDownload);
+  } catch (err) { return { error: err.message }; }
+});
+
+async function downloadWithYtdlp(url, savePath, emit, dl, quality) {
+  const ytdlpPath = await ensureYtdlp(emit);
+  emit({ percent: 5, message: 'Starting yt-dlp\u2026', speed: 0, downloaded: 0 });
+  return new Promise((resolve, reject) => {
+    const outputTemplate = path.join(savePath, '%(title)s.%(ext)s');
+    // Build quality format string
+    let fmtArg;
+    switch (quality) {
+      case 'best':  fmtArg = 'bestvideo+bestaudio/best'; break;
+      case '1080':  fmtArg = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]'; break;
+      case '720':   fmtArg = 'bestvideo[height<=720]+bestaudio/best[height<=720]'; break;
+      case '480':   fmtArg = 'bestvideo[height<=480]+bestaudio/best[height<=480]'; break;
+      case '360':   fmtArg = 'bestvideo[height<=360]+bestaudio/best[height<=360]'; break;
+      case 'audio': fmtArg = 'bestaudio'; break;
+      default:      fmtArg = 'bestvideo[height<=1080]+bestaudio/best'; break;
+    }
+    const args = ['-f', fmtArg, '-o', outputTemplate, '--no-playlist', '--newline', '--progress', '--merge-output-format', quality === 'audio' ? 'mp3' : 'mp4', url];
+    const proc = spawn(ytdlpPath, args, { cwd: savePath, shell: false });
+    dl.proc = proc;
+    let lastFile = '', stderr = '';
+    proc.stdout.on('data', (chunk) => {
+      for (const line of chunk.toString().split('\n')) {
+        const m = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\s*\w+)\s+at\s+([\d.]+\s*\w+\/s)/);
+        if (m) emit({ percent: parseFloat(m[1]), message: `Downloading: ${Math.round(parseFloat(m[1]))}%`, speed: parseSpeedToBytes(m[3]) });
+        const d = line.match(/\[(?:download|Merger)\].*?Destination:\s*(.+)/);
+        if (d) lastFile = d[1].trim();
+        const mg = line.match(/\[Merger\]\s+Merging formats into "(.+?)"/);
+        if (mg) lastFile = mg[1].trim();
+      }
+    });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (dl.cancelled) { resolve({ error: 'Download cancelled' }); return; }
+      if (code !== 0) { reject(new Error(stderr.slice(0, 200) || 'yt-dlp failed')); return; }
+      if (!lastFile) {
+        const files = fs.readdirSync(savePath).map(f => ({ name: f, time: fs.statSync(path.join(savePath, f)).mtimeMs })).sort((a, b) => b.time - a.time);
+        if (files.length) lastFile = path.join(savePath, files[0].name);
+      }
+      if (lastFile && fs.existsSync(lastFile)) resolve({ filePath: lastFile, fileSize: fs.statSync(lastFile).size });
+      else resolve({ filePath: savePath, fileSize: 0 });
+    });
+    proc.on('error', reject);
+  });
+}
+
+function parseSpeedToBytes(str) {
+  const m = str.match(/([\d.]+)\s*(KiB|MiB|GiB|B)/i);
+  if (!m) return 0;
+  const v = parseFloat(m[1]), u = m[2].toLowerCase();
+  return u === 'gib' ? v*1073741824 : u === 'mib' ? v*1048576 : u === 'kib' ? v*1024 : v;
+}
+
+async function ensureYtdlp(emit) {
+  const ytdlpDir = path.join(app.getPath('userData'), 'bin');
+  const ytdlpPath = path.join(ytdlpDir, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+  if (fs.existsSync(ytdlpPath)) return ytdlpPath;
+  emit({ percent: 0, message: 'Downloading yt-dlp (first time only)\u2026', speed: 0 });
+  fs.mkdirSync(ytdlpDir, { recursive: true });
+  const dlUrl = process.platform === 'win32'
+    ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
+    : process.platform === 'darwin'
+      ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos'
+      : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
+  await dlFile(dlUrl, ytdlpPath, (pct) => emit({ percent: pct * 0.05, message: `Downloading yt-dlp: ${Math.round(pct)}%`, speed: 0 }));
+  if (process.platform !== 'win32') fs.chmodSync(ytdlpPath, 0o755);
+  return ytdlpPath;
+}
+
+function dlFile(url, dest, onProgress) {
+  return new Promise((resolve, reject) => {
+    const https = require('https'), http = require('http');
+    const doRequest = (u) => {
+      const mod = u.startsWith('https') ? https : http;
+      mod.get(u, { headers: { 'User-Agent': 'ContraryConvertor/1.0' } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { doRequest(res.headers.location); return; }
+        if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+        const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+        let downloaded = 0;
+        const fileStream = fs.createWriteStream(dest);
+        res.on('data', (chunk) => { downloaded += chunk.length; if (totalBytes && onProgress) onProgress((downloaded / totalBytes) * 100); });
+        res.pipe(fileStream);
+        fileStream.on('finish', () => { fileStream.close(); resolve(); });
+        fileStream.on('error', reject);
+      }).on('error', reject);
+    };
+    doRequest(url);
+  });
+}
+
+async function downloadDirect(url, savePath, threads, emit, dl) {
+  const https = require('https'), http = require('http');
+  emit({ percent: 0, message: 'Fetching file info\u2026', speed: 0, downloaded: 0 });
+  const info = await getUrlInfo(url);
+  const totalSize = info.contentLength;
+  const fileName = info.fileName || urlToFilename(url);
+  const outputPath = path.join(savePath, fileName);
+  const supportsRanges = info.acceptRanges && totalSize > 0;
+
+  if (!supportsRanges || totalSize < 1024 * 1024 || threads <= 1) {
+    return await singleThreadDownload(url, outputPath, totalSize, emit, dl);
+  }
+
+  emit({ percent: 0, message: `Downloading with ${threads} threads\u2026`, speed: 0 });
+  const chunkSize = Math.ceil(totalSize / threads);
+  const tempFiles = [];
+  let totalDownloaded = 0, startTime = Date.now();
+  dl.requests = [];
+
+  const chunkPromises = [];
+  for (let i = 0; i < threads; i++) {
+    const start = i * chunkSize, end = Math.min(start + chunkSize - 1, totalSize - 1);
+    const tmpFile = `${outputPath}.part${i}`;
+    tempFiles.push(tmpFile);
+    chunkPromises.push(new Promise((resolve, reject) => {
+      const doReq = (u) => {
+        const mod = u.startsWith('https') ? https : http;
+        const req = mod.get(u, { headers: { 'Range': `bytes=${start}-${end}`, 'User-Agent': 'ContraryConvertor/1.0' } }, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { doReq(res.headers.location); return; }
+          const ws = fs.createWriteStream(tmpFile);
+          res.on('data', (chunk) => {
+            if (dl.cancelled) { req.destroy(); ws.destroy(); return; }
+            totalDownloaded += chunk.length;
+            const elapsed = (Date.now() - startTime) / 1000;
+            const speed = elapsed > 0 ? totalDownloaded / elapsed : 0;
+            const pct = totalSize > 0 ? (totalDownloaded / totalSize) * 100 : 0;
+            emit({ percent: pct, message: `Downloading: ${Math.round(pct)}%`, speed, downloaded: totalDownloaded, total: totalSize });
+          });
+          res.pipe(ws);
+          ws.on('finish', resolve);
+          ws.on('error', reject);
+        });
+        req.on('error', reject);
+        dl.requests.push(req);
+      };
+      doReq(url);
+    }));
+  }
+
+  await Promise.all(chunkPromises);
+  if (dl.cancelled) { tempFiles.forEach(f => { try { fs.unlinkSync(f); } catch {} }); return { error: 'Download cancelled' }; }
+
+  emit({ percent: 95, message: 'Combining chunks\u2026', speed: 0, downloaded: totalDownloaded, total: totalSize });
+  const writeStream = fs.createWriteStream(outputPath);
+  for (const tmpFile of tempFiles) { writeStream.write(fs.readFileSync(tmpFile)); fs.unlinkSync(tmpFile); }
+  writeStream.end();
+  await new Promise(r => writeStream.on('finish', r));
+  return { filePath: outputPath, fileSize: fs.statSync(outputPath).size };
+}
+
+async function singleThreadDownload(url, outputPath, totalSize, emit, dl) {
+  const https = require('https'), http = require('http');
+  return new Promise((resolve, reject) => {
+    let downloaded = 0, startTime = Date.now();
+    const doReq = (u) => {
+      const mod = u.startsWith('https') ? https : http;
+      const req = mod.get(u, { headers: { 'User-Agent': 'ContraryConvertor/1.0' } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { doReq(res.headers.location); return; }
+        if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+        const total = parseInt(res.headers['content-length'] || totalSize || '0', 10);
+        const ws = fs.createWriteStream(outputPath);
+        res.on('data', (chunk) => {
+          if (dl.cancelled) { req.destroy(); ws.destroy(); return; }
+          downloaded += chunk.length;
+          const elapsed = (Date.now() - startTime) / 1000;
+          const speed = elapsed > 0 ? downloaded / elapsed : 0;
+          const pct = total > 0 ? (downloaded / total) * 100 : 0;
+          emit({ percent: pct, message: `Downloading: ${Math.round(pct)}%`, speed, downloaded, total });
+        });
+        res.pipe(ws);
+        ws.on('finish', () => { ws.close(); if (dl.cancelled) { resolve({ error: 'Cancelled' }); return; } resolve({ filePath: outputPath, fileSize: fs.statSync(outputPath).size }); });
+        ws.on('error', reject);
+      });
+      req.on('error', reject);
+      dl.requests = [req];
+    };
+    doReq(url);
+  });
+}
+
+function getUrlInfo(url) {
+  const https = require('https'), http = require('http');
+  return new Promise((resolve, reject) => {
+    const doReq = (u) => {
+      const mod = u.startsWith('https') ? https : http;
+      const req = mod.request(u, { method: 'HEAD', headers: { 'User-Agent': 'ContraryConvertor/1.0' } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { doReq(res.headers.location); return; }
+        let fileName = null;
+        const cd = res.headers['content-disposition'];
+        if (cd) { const m = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/); if (m) fileName = m[1].replace(/['"]/g, ''); }
+        resolve({ contentLength: parseInt(res.headers['content-length'] || '0', 10), acceptRanges: res.headers['accept-ranges'] === 'bytes', fileName, contentType: res.headers['content-type'] });
+      });
+      req.on('error', reject);
+      req.end();
+    };
+    doReq(url);
+  });
+}
+
+function urlToFilename(url) {
+  try {
+    const u = new URL(url);
+    let name = path.basename(u.pathname);
+    if (!name || name === '/' || !name.includes('.')) name = 'download_' + Date.now() + '.bin';
+    return name.replace(/[<>:"/\\|?*]/g, '_');
+  } catch { return 'download_' + Date.now() + '.bin'; }
+}
+
 
 // ─── Category + format helpers ────────────────────────────────────────────────
 function detectCategory(ext) {
   const maps = {
-    image:       ['jpg','jpeg','png','webp','avif','gif','tiff','tif','bmp','svg','ico','heic'],
-    video:       ['mp4','mov','avi','mkv','webm','flv','wmv','m4v'],
-    audio:       ['mp3','wav','ogg','flac','aac','m4a','wma','opus'],
-    document:    ['pdf','docx','doc','odt'],
-    data:        ['json','csv','xml','yaml','yml','toml'],
-    spreadsheet: ['xlsx','xls','ods'],
-    archive:     ['zip','tar','gz'],
-    web:         ['html','htm'],
-    text:        ['txt','md','markdown'],
+    image:        ['jpg','jpeg','png','webp','avif','gif','tiff','tif','bmp','svg','ico','heic'],
+    video:        ['mp4','mov','avi','mkv','webm','flv','wmv','m4v'],
+    audio:        ['mp3','wav','ogg','flac','aac','m4a','wma','opus'],
+    document:     ['pdf','docx','doc','odt'],
+    data:         ['json','csv','xml','yaml','yml','toml'],
+    config:       ['env'],
+    spreadsheet:  ['xlsx','xls','ods'],
+    archive:      ['zip','tar','gz'],
+    'game-archive':['pak','rpf','wad','obb'],
+    web:          ['html','htm'],
+    text:         ['txt','md','markdown'],
+    font:         ['ttf','otf','woff','woff2'],
+    '3d':         ['fbx','obj','glb','gltf'],
   };
+  // .env files have no extension—check by filename
   for (const [cat, exts] of Object.entries(maps)) {
     if (exts.includes(ext)) return cat;
   }
@@ -302,24 +547,44 @@ function getMimeFromExt(ext) {
   const m = { jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',
     gif:'image/gif',pdf:'application/pdf',mp4:'video/mp4',mp3:'audio/mpeg',
     json:'application/json',csv:'text/csv',html:'text/html',txt:'text/plain',
-    xml:'application/xml',yaml:'application/yaml',zip:'application/zip' };
+    xml:'application/xml',yaml:'application/yaml',zip:'application/zip',
+    ttf:'font/ttf',otf:'font/otf',woff:'font/woff',woff2:'font/woff2',
+    glb:'model/gltf-binary',gltf:'model/gltf+json',obj:'model/obj',fbx:'application/octet-stream',
+    toml:'application/toml',env:'text/plain',
+    pak:'application/octet-stream',rpf:'application/octet-stream',wad:'application/octet-stream',obb:'application/octet-stream' };
   return m[ext] || 'application/octet-stream';
 }
 
 function getOutputFormats(category, ext) {
   const fmt = {
-    image:       ['jpg','png','webp','avif','gif','tiff','bmp','ico'],
-    video:       ['mp4','webm','mov','avi','mkv','gif','mp3'],
-    audio:       ['mp3','wav','ogg','flac','aac','opus'],
-    document:    { pdf:['txt','html'], docx:['pdf','html','txt'], doc:['pdf','html','txt'], odt:['pdf','html','txt'] },
-    data:        ['json','csv','xml','yaml'],
-    spreadsheet: ['csv','json','xlsx'],
-    archive:     ['zip','tar'],
-    web:         ['pdf','png'],
-    text:        ['pdf','html'],
+    image:        ['jpg','png','webp','avif','gif','tiff','bmp','ico'],
+    video:        ['mp4','webm','mov','avi','mkv','gif','mp3'],
+    audio:        ['mp3','wav','ogg','flac','aac','opus'],
+    document:     { pdf:['txt','html','extract-images','extract-fonts'], docx:['pdf','html','txt','extract-text'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text'] },
+    data:         ['json','csv','xml','yaml','toml','env'],
+    config:       ['json','yaml','toml'],
+    spreadsheet:  ['csv','json','xlsx'],
+    archive:      ['zip','tar'],
+    'game-archive':['extract'],
+    web:          ['pdf','png','txt','extract-text'],
+    text:         ['pdf','html','extract-text'],
+    font:         ['ttf','otf','extract-text'],
+    '3d':         ['glb','obj','fbx'],
   };
-  if (category === 'document') return fmt.document[ext] || fmt.document.docx;
-  return (fmt[category] || []).filter(f => f !== ext);
+
+  if (category === 'document') {
+    const f = fmt.document[ext] || fmt.document.docx;
+    return f.filter(fo => fo !== ext);
+  }
+
+  // For video/audio also add FIX
+  let list = (fmt[category] || []).filter(f => f !== ext);
+  if (category === 'video' || category === 'audio') list.push('fix');
+
+  // For images that are PDFs or similar, we can extract text
+  if (category === 'image') list.push('extract-text');
+
+  return list;
 }
 
 // ─── ffprobe helper ───────────────────────────────────────────────────────────
@@ -412,8 +677,18 @@ ipcMain.handle('file:convert', async (event, { filePath, outputFormat, options }
 
   // Fix mode: output suffix is _fixed, always mp4
   const isFix      = outputFormat === 'fix';
-  const outExt     = isFix ? 'mp4' : outputFormat;
-  const outputPath = path.join(dir, `${base}_${isFix ? 'fixed' : 'converted'}.${outExt}`);
+  const isExtract  = outputFormat.startsWith('extract');
+
+  let outputPath;
+  if (isFix) {
+    outputPath = path.join(dir, `${base}_fixed.mp4`);
+  } else if (isExtract) {
+    // Extraction outputs to a folder
+    outputPath = path.join(dir, `${base}_${outputFormat.replace('-','_')}`);
+    fs.mkdirSync(outputPath, { recursive: true });
+  } else {
+    outputPath = path.join(dir, `${base}_converted.${outputFormat}`);
+  }
 
   const emit = (pct, msg) => event.sender.send('convert:progress', { percent: pct, message: msg });
 
@@ -422,6 +697,14 @@ ipcMain.handle('file:convert', async (event, { filePath, outputFormat, options }
 
     if (isFix) {
       await fixForPlatform(filePath, outputPath, options, emit);
+    } else if (outputFormat === 'extract-text') {
+      await extractText(filePath, outputPath, ext, emit);
+    } else if (outputFormat === 'extract-images') {
+      await extractPdfImages(filePath, outputPath, emit);
+    } else if (outputFormat === 'extract-fonts') {
+      await extractPdfFonts(filePath, outputPath, emit);
+    } else if (outputFormat === 'extract') {
+      await extractGameArchive(filePath, outputPath, ext, emit);
     } else {
       const category = detectCategory(ext);
       switch (category) {
@@ -429,21 +712,39 @@ ipcMain.handle('file:convert', async (event, { filePath, outputFormat, options }
         case 'video':                   await convertVideo(filePath, outputPath, outputFormat, options, emit); break;
         case 'audio':                   await convertAudio(filePath, outputPath, outputFormat, options, emit); break;
         case 'document':                await convertDocument(filePath, outputPath, outputFormat, options, emit); break;
-        case 'data': case 'spreadsheet':await convertData(filePath, outputPath, outputFormat, options, emit); break;
+        case 'data': case 'config':
+        case 'spreadsheet':             await convertData(filePath, outputPath, outputFormat, options, emit); break;
         case 'archive':                 await convertArchive(filePath, outputPath, outputFormat, options, emit); break;
         case 'web': case 'text':        await convertWeb(filePath, outputPath, outputFormat, options, emit); break;
+        case 'font':                    await convertFont(filePath, outputPath, outputFormat, options, emit); break;
+        case '3d':                      await convert3D(filePath, outputPath, outputFormat, ext, emit); break;
         default: throw new Error(`Unsupported file category: ${category}`);
       }
     }
 
     emit(100, 'Done!');
-    const stat = fs.statSync(outputPath);
-    return { success: true, outputPath, outputSize: stat.size };
+    let outputSize = 0;
+    try {
+      const st = fs.statSync(outputPath);
+      outputSize = st.isDirectory() ? getDirSize(outputPath) : st.size;
+    } catch {}
+    return { success: true, outputPath, outputSize };
   } catch (err) {
     event.sender.send('convert:error', { message: err.message });
     return { error: err.message };
   }
 });
+
+function getDirSize(dirPath) {
+  let total = 0;
+  const items = fs.readdirSync(dirPath);
+  for (const item of items) {
+    const fp = path.join(dirPath, item);
+    const st = fs.statSync(fp);
+    total += st.isDirectory() ? getDirSize(fp) : st.size;
+  }
+  return total;
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  CONVERTERS
@@ -710,11 +1011,19 @@ async function convertDocument(input, output, format, options, emit) {
     await htmlToPdf(html, output);
 
   } else if (ext === 'pdf' && format === 'txt') {
-    emit(40, 'Extracting PDF content…');
-    const { PDFDocument } = r('pdf-lib');
-    const data = fs.readFileSync(input);
-    const doc  = await PDFDocument.load(data);
-    fs.writeFileSync(output, `PDF — ${doc.getPageCount()} page(s)\nFile: ${path.basename(input)}\n`, 'utf-8');
+    emit(40, 'Extracting PDF text…');
+    try {
+      const pdfParse = r('pdf-parse');
+      const dataBuffer = fs.readFileSync(input);
+      const parsed = await pdfParse(dataBuffer);
+      fs.writeFileSync(output, parsed.text || `PDF — ${parsed.numpages} page(s)\nFile: ${path.basename(input)}\n`, 'utf-8');
+    } catch (e) {
+      // Fallback to pdf-lib
+      const { PDFDocument } = r('pdf-lib');
+      const data = fs.readFileSync(input);
+      const doc  = await PDFDocument.load(data);
+      fs.writeFileSync(output, `PDF — ${doc.getPageCount()} page(s)\nFile: ${path.basename(input)}\n`, 'utf-8');
+    }
 
   } else if (ext === 'pdf' && format === 'html') {
     emit(40, 'Converting PDF → HTML…');
@@ -728,7 +1037,7 @@ async function convertDocument(input, output, format, options, emit) {
   emit(90, 'Finalizing…');
 }
 
-// ── Data / Spreadsheet ────────────────────────────────────────────────────────
+// ── Data / Spreadsheet / Config ───────────────────────────────────────────────
 async function convertData(input, output, format, options, emit) {
   const ext     = path.extname(input).toLowerCase().slice(1);
   const content = fs.readFileSync(input, 'utf-8');
@@ -739,8 +1048,12 @@ async function convertData(input, output, format, options, emit) {
     data = JSON.parse(content);
   } else if (ext === 'yaml' || ext === 'yml') {
     data = r('js-yaml').load(content);
+  } else if (ext === 'toml') {
+    const TOML = r('@iarna/toml');
+    data = TOML.parse(content);
+  } else if (ext === 'env') {
+    data = parseEnvFile(content);
   } else if (ext === 'csv') {
-    // NODE_PATH is set at startup; csv-parse/sync resolves from the right node_modules
     const { parse } = require('csv-parse/sync');
     data = parse(content, { columns: true, skip_empty_lines: true });
   } else if (ext === 'xml') {
@@ -759,6 +1072,11 @@ async function convertData(input, output, format, options, emit) {
     fs.writeFileSync(output, JSON.stringify(data, null, 2), 'utf-8');
   } else if (format === 'yaml') {
     fs.writeFileSync(output, r('js-yaml').dump(data), 'utf-8');
+  } else if (format === 'toml') {
+    const TOML = r('@iarna/toml');
+    fs.writeFileSync(output, TOML.stringify(data), 'utf-8');
+  } else if (format === 'env') {
+    fs.writeFileSync(output, writeEnvFile(data), 'utf-8');
   } else if (format === 'csv') {
     const { stringify } = require('csv-stringify/sync');
     fs.writeFileSync(output, stringify(Array.isArray(data) ? data : [data], { header: true }), 'utf-8');
@@ -774,6 +1092,43 @@ async function convertData(input, output, format, options, emit) {
     throw new Error(`Unsupported output format: ${format}`);
   }
   emit(90, 'Finalizing…');
+}
+
+// ── .env parser/writer ────────────────────────────────────────────────────────
+function parseEnvFile(content) {
+  const result = {};
+  content.split('\n').forEach(line => {
+    line = line.trim();
+    if (!line || line.startsWith('#')) return;
+    const eqIdx = line.indexOf('=');
+    if (eqIdx === -1) return;
+    const key = line.slice(0, eqIdx).trim();
+    let val = line.slice(eqIdx + 1).trim();
+    // Strip surrounding quotes
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    result[key] = val;
+  });
+  return result;
+}
+
+function writeEnvFile(data) {
+  if (typeof data !== 'object' || data === null) return String(data);
+  const lines = [];
+  const flatten = (obj, prefix = '') => {
+    for (const [key, val] of Object.entries(obj)) {
+      const k = prefix ? `${prefix}_${key}` : key;
+      if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+        flatten(val, k);
+      } else {
+        const v = String(val);
+        lines.push(v.includes(' ') || v.includes('#') ? `${k}="${v}"` : `${k}=${v}`);
+      }
+    }
+  };
+  flatten(data);
+  return lines.join('\n') + '\n';
 }
 
 // ── Archive ───────────────────────────────────────────────────────────────────
@@ -921,4 +1276,632 @@ function mdToHtml(md) {
 
 function escHtml(t) {
   return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  NEW CONVERTERS
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── Text Extraction (from anything) ──────────────────────────────────────────
+async function extractText(input, outputDir, ext, emit) {
+  const base = path.basename(input, path.extname(input));
+  const outputFile = path.join(outputDir, `${base}.txt`);
+
+  emit(10, 'Detecting source type…');
+
+  // PDF
+  if (ext === 'pdf') {
+    emit(30, 'Extracting PDF text…');
+    try {
+      const pdfParse = r('pdf-parse');
+      const buf = fs.readFileSync(input);
+      const parsed = await pdfParse(buf);
+      fs.writeFileSync(outputFile, parsed.text || '(no text found)', 'utf-8');
+    } catch {
+      fs.writeFileSync(outputFile, '(PDF text extraction failed)', 'utf-8');
+    }
+  }
+  // DOCX
+  else if (ext === 'docx' || ext === 'doc') {
+    emit(30, 'Extracting DOCX text…');
+    const mammoth = r('mammoth');
+    const res = await mammoth.extractRawText({ path: input });
+    fs.writeFileSync(outputFile, res.value, 'utf-8');
+  }
+  // XLSX
+  else if (['xlsx','xls','ods'].includes(ext)) {
+    emit(30, 'Extracting spreadsheet text…');
+    const XLSX = r('xlsx');
+    const wb = XLSX.readFile(input);
+    let text = '';
+    for (const name of wb.SheetNames) {
+      text += `── ${name} ──\n`;
+      text += XLSX.utils.sheet_to_csv(wb.Sheets[name]) + '\n\n';
+    }
+    fs.writeFileSync(outputFile, text, 'utf-8');
+  }
+  // Images (OCR)
+  else if (['jpg','jpeg','png','webp','bmp','tiff','tif','gif','avif'].includes(ext)) {
+    emit(20, 'Loading OCR engine…');
+    try {
+      const Tesseract = r('tesseract.js');
+      emit(30, 'Recognizing text (this may take a moment)…');
+      const { data } = await Tesseract.recognize(input, 'eng', {
+        logger: m => {
+          if (m.status === 'recognizing text' && m.progress) {
+            emit(30 + Math.round(m.progress * 60), `OCR ${Math.round(m.progress * 100)}%…`);
+          }
+        }
+      });
+      fs.writeFileSync(outputFile, data.text || '(no text recognized)', 'utf-8');
+    } catch (e) {
+      fs.writeFileSync(outputFile, `OCR failed: ${e.message}`, 'utf-8');
+    }
+  }
+  // HTML
+  else if (['html','htm'].includes(ext)) {
+    emit(30, 'Stripping HTML tags…');
+    const content = fs.readFileSync(input, 'utf-8');
+    const text = content.replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ').trim();
+    fs.writeFileSync(outputFile, text, 'utf-8');
+  }
+  // Any text file
+  else {
+    emit(30, 'Reading file as text…');
+    try {
+      const content = fs.readFileSync(input, 'utf-8');
+      fs.writeFileSync(outputFile, content, 'utf-8');
+    } catch {
+      fs.writeFileSync(outputFile, '(binary file — cannot extract text)', 'utf-8');
+    }
+  }
+  emit(90, 'Finalizing…');
+}
+
+// ── PDF Image Extraction ─────────────────────────────────────────────────────
+async function extractPdfImages(input, outputDir, emit) {
+  emit(10, 'Loading PDF…');
+
+  try {
+    const { PDFDocument } = r('pdf-lib');
+    const pdfBytes = fs.readFileSync(input);
+    const pdfDoc   = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    const pages    = pdfDoc.getPages();
+
+    // Use sharp to render pages as images via puppeteer
+    emit(20, 'Rendering pages…');
+    const puppeteer = r('puppeteer');
+    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+    const page    = await browser.newPage();
+
+    // Create an HTML page that loads the PDF
+    await page.setViewport({ width: 1200, height: 1600 });
+
+    for (let i = 0; i < pages.length; i++) {
+      emit(20 + Math.round((i / pages.length) * 70), `Rendering page ${i + 1}/${pages.length}…`);
+
+      // Extract individual page as a separate PDF
+      const singleDoc = await PDFDocument.create();
+      const [copiedPage] = await singleDoc.copyPages(pdfDoc, [i]);
+      singleDoc.addPage(copiedPage);
+      const singleBytes = await singleDoc.save();
+      const tmpPdf = path.join(outputDir, `_tmp_page_${i}.pdf`);
+      fs.writeFileSync(tmpPdf, singleBytes);
+
+      // Render via puppeteer
+      await page.goto(`file:///${tmpPdf.replace(/\\/g, '/')}`, { waitUntil: 'networkidle0' });
+      await page.screenshot({ path: path.join(outputDir, `page_${i + 1}.png`), fullPage: true });
+
+      // Clean temp
+      fs.unlinkSync(tmpPdf);
+    }
+
+    await browser.close();
+  } catch (e) {
+    // Fallback: just note that extraction failed
+    fs.writeFileSync(path.join(outputDir, 'error.txt'), `Image extraction error: ${e.message}`, 'utf-8');
+  }
+
+  emit(90, 'Finalizing…');
+}
+
+// ── PDF Font Extraction ──────────────────────────────────────────────────────
+async function extractPdfFonts(input, outputDir, emit) {
+  emit(10, 'Loading PDF…');
+
+  const pdfBytes = fs.readFileSync(input);
+  const { PDFDocument, PDFName, PDFDict, PDFStream, PDFRef } = r('pdf-lib');
+  const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+
+  emit(30, 'Scanning for fonts…');
+
+  const fontNames = [];
+  const fontData = [];
+  const seen = new Set();
+
+  // Iterate all objects looking for font dictionaries
+  pdfDoc.context.enumerateIndirectObjects().forEach(([ref, obj]) => {
+    try {
+      if (obj instanceof PDFDict) {
+        const type = obj.get(PDFName.of('Type'));
+        if (type && type.toString() === '/Font') {
+          const baseFont = obj.get(PDFName.of('BaseFont'));
+          const name = baseFont ? baseFont.toString().replace('/', '') : `font_${ref.objectNumber}`;
+          if (!seen.has(name)) {
+            seen.add(name);
+            fontNames.push(name);
+
+            // Try to extract the font file
+            const desc = obj.get(PDFName.of('FontDescriptor'));
+            if (desc && desc instanceof PDFRef) {
+              const descDict = pdfDoc.context.lookup(desc);
+              if (descDict instanceof PDFDict) {
+                for (const key of ['FontFile', 'FontFile2', 'FontFile3']) {
+                  const ffRef = descDict.get(PDFName.of(key));
+                  if (ffRef && ffRef instanceof PDFRef) {
+                    const stream = pdfDoc.context.lookup(ffRef);
+                    if (stream instanceof PDFStream) {
+                      const data = stream.getContents();
+                      const ext = key === 'FontFile2' ? 'ttf' : (key === 'FontFile3' ? 'otf' : 'pfb');
+                      fontData.push({ name, ext, data });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+  });
+
+  emit(70, 'Writing fonts…');
+
+  // Write font list
+  const listContent = fontNames.length
+    ? `Fonts found: ${fontNames.length}\n\n${fontNames.map((n, i) => `${i + 1}. ${n}`).join('\n')}`
+    : 'No fonts found in this PDF.';
+  fs.writeFileSync(path.join(outputDir, 'font_list.txt'), listContent, 'utf-8');
+
+  // Write extracted font files
+  for (const fd of fontData) {
+    const safeName = fd.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    fs.writeFileSync(path.join(outputDir, `${safeName}.${fd.ext}`), fd.data);
+  }
+
+  emit(90, 'Finalizing…');
+}
+
+// ── Font Conversion ──────────────────────────────────────────────────────────
+async function convertFont(input, output, format, options, emit) {
+  const opentype = r('opentype.js');
+  emit(10, 'Loading font…');
+
+  const font = opentype.loadSync(input);
+  emit(40, 'Processing font…');
+
+  if (format === 'extract-text') {
+    // Extract font metadata as text
+    const info = [
+      `Font Family: ${font.names.fontFamily?.en || 'Unknown'}`,
+      `Font Subfamily: ${font.names.fontSubfamily?.en || 'Unknown'}`,
+      `Full Name: ${font.names.fullName?.en || 'Unknown'}`,
+      `Version: ${font.names.version?.en || 'Unknown'}`,
+      `Designer: ${font.names.designer?.en || 'Unknown'}`,
+      `License: ${font.names.license?.en || 'Unknown'}`,
+      `Glyphs: ${font.glyphs.length}`,
+      `Units Per Em: ${font.unitsPerEm}`,
+      `Ascender: ${font.ascender}`,
+      `Descender: ${font.descender}`,
+    ];
+    fs.writeFileSync(output, info.join('\n'), 'utf-8');
+  } else {
+    // Convert between TTF/OTF
+    // opentype.js can write OTF (CFF-based) or TTF
+    emit(60, `Writing ${format.toUpperCase()}…`);
+    const buf = font.download ? null : font.toArrayBuffer();
+    if (buf) {
+      fs.writeFileSync(output, Buffer.from(buf));
+    } else {
+      // Simple copy with extension change (opentype.js outputs the same binary)
+      fs.copyFileSync(input, output);
+    }
+  }
+  emit(90, 'Finalizing…');
+}
+
+// ── 3D Model Conversion ─────────────────────────────────────────────────────
+async function convert3D(input, output, format, srcExt, emit) {
+  emit(10, 'Loading 3D model…');
+
+  if (srcExt === 'obj' && format === 'glb') {
+    emit(30, 'Converting OBJ → GLB…');
+    const obj2gltf = r('obj2gltf');
+    const glb = await obj2gltf(input, { binary: true });
+    fs.writeFileSync(output, glb);
+
+  } else if (srcExt === 'obj' && format === 'fbx') {
+    throw new Error('OBJ → FBX conversion requires proprietary Autodesk SDK. Convert to GLB instead.');
+
+  } else if (srcExt === 'glb' || srcExt === 'gltf') {
+    if (format === 'obj') {
+      emit(30, 'Converting GLB → OBJ…');
+      await glbToObj(input, output, srcExt, emit);
+    } else if (format === 'fbx') {
+      throw new Error('GLB → FBX conversion requires proprietary Autodesk SDK.');
+    }
+
+  } else if (srcExt === 'fbx') {
+    if (format === 'glb') {
+      emit(30, 'Converting FBX → GLB…');
+      // Try fbx2gltf binary
+      try {
+        await fbxToGlb(input, output, emit);
+      } catch (e) {
+        throw new Error(`FBX → GLB failed: ${e.message}. FBX is a proprietary format with limited open-source support.`);
+      }
+    } else if (format === 'obj') {
+      throw new Error('FBX → OBJ: convert to GLB first, then GLB → OBJ.');
+    }
+  } else {
+    throw new Error(`3D conversion from ${srcExt} to ${format} is not supported.`);
+  }
+
+  emit(90, 'Finalizing…');
+}
+
+// Basic GLB → OBJ converter
+async function glbToObj(input, output, srcExt, emit) {
+  const data = fs.readFileSync(input);
+  let jsonChunk;
+
+  if (srcExt === 'glb') {
+    // Parse GLB binary
+    const magic = data.readUInt32LE(0);
+    if (magic !== 0x46546C67) throw new Error('Not a valid GLB file');
+    const chunkLen = data.readUInt32LE(12);
+    jsonChunk = JSON.parse(data.slice(20, 20 + chunkLen).toString('utf-8'));
+  } else {
+    jsonChunk = JSON.parse(data.toString('utf-8'));
+  }
+
+  emit(50, 'Extracting mesh data…');
+
+  let objContent = '# Exported by Contrary Convertor\n';
+  let vertexOffset = 1;
+
+  if (!jsonChunk.meshes || !jsonChunk.meshes.length) {
+    throw new Error('No meshes found in glTF file');
+  }
+
+  // Get binary buffer
+  let binBuffer = null;
+  if (srcExt === 'glb') {
+    const jsonChunkLen = data.readUInt32LE(12);
+    const binStart = 20 + jsonChunkLen + 8; // 8 for bin chunk header
+    binBuffer = data.slice(binStart);
+  }
+
+  if (binBuffer && jsonChunk.accessors && jsonChunk.bufferViews) {
+    for (const mesh of jsonChunk.meshes) {
+      objContent += `o ${mesh.name || 'mesh'}\n`;
+      for (const prim of mesh.primitives) {
+        // Positions
+        if (prim.attributes.POSITION !== undefined) {
+          const acc = jsonChunk.accessors[prim.attributes.POSITION];
+          const bv = jsonChunk.bufferViews[acc.bufferView];
+          const offset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
+          for (let i = 0; i < acc.count; i++) {
+            const x = binBuffer.readFloatLE(offset + i * 12);
+            const y = binBuffer.readFloatLE(offset + i * 12 + 4);
+            const z = binBuffer.readFloatLE(offset + i * 12 + 8);
+            objContent += `v ${x} ${y} ${z}\n`;
+          }
+        }
+        // Indices
+        if (prim.indices !== undefined) {
+          const acc = jsonChunk.accessors[prim.indices];
+          const bv = jsonChunk.bufferViews[acc.bufferView];
+          const offset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
+          const is16 = acc.componentType === 5123;
+          for (let i = 0; i < acc.count; i += 3) {
+            const a = (is16 ? binBuffer.readUInt16LE(offset + i * 2) : binBuffer.readUInt32LE(offset + i * 4)) + vertexOffset;
+            const b = (is16 ? binBuffer.readUInt16LE(offset + (i+1) * 2) : binBuffer.readUInt32LE(offset + (i+1) * 4)) + vertexOffset;
+            const c = (is16 ? binBuffer.readUInt16LE(offset + (i+2) * 2) : binBuffer.readUInt32LE(offset + (i+2) * 4)) + vertexOffset;
+            objContent += `f ${a} ${b} ${c}\n`;
+          }
+        }
+        if (prim.attributes.POSITION !== undefined) {
+          vertexOffset += jsonChunk.accessors[prim.attributes.POSITION].count;
+        }
+      }
+    }
+  } else {
+    throw new Error('Cannot parse mesh data from this glTF file');
+  }
+
+  fs.writeFileSync(output, objContent, 'utf-8');
+}
+
+// FBX → GLB via command line fbx2gltf (if available)
+async function fbxToGlb(input, output, emit) {
+  return new Promise((resolve, reject) => {
+    // Try to find fbx2gltf in node_modules/.bin
+    const binName = process.platform === 'win32' ? 'FBX2glTF-windows-x64.exe' : 'FBX2glTF';
+    let binPath;
+    try {
+      binPath = require.resolve(`fbx2gltf/bin/${binName}`);
+    } catch {
+      // Try via npx
+      binPath = 'npx';
+    }
+
+    const args = binPath === 'npx'
+      ? ['fbx2gltf', '--', '--binary', '--input', input, '--output', output.replace(/\.glb$/, '')]
+      : ['--binary', '--input', input, '--output', output.replace(/\.glb$/, '')];
+
+    const proc = spawn(binPath, args, { shell: true, cwd: path.dirname(input) });
+
+    let stderr = '';
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr || `fbx2gltf exited with code ${code}`));
+    });
+    proc.on('error', reject);
+  });
+}
+
+// ── Game Archive Extraction ──────────────────────────────────────────────────
+async function extractGameArchive(input, outputDir, ext, emit) {
+  emit(10, `Detecting ${ext.toUpperCase()} format…`);
+
+  if (ext === 'obb') {
+    // OBB is just a ZIP file
+    emit(20, 'Extracting OBB (ZIP) archive…');
+    const StreamZip = r('node-stream-zip');
+    const zip = new StreamZip.async({ file: input });
+    const entries = await zip.entries();
+    const total = Object.keys(entries).length;
+    let done = 0;
+
+    for (const entry of Object.values(entries)) {
+      if (!entry.isDirectory) {
+        const ep = path.join(outputDir, entry.name);
+        fs.mkdirSync(path.dirname(ep), { recursive: true });
+        await zip.extract(entry.name, ep);
+      }
+      emit(Math.min(20 + Math.round((++done / total) * 70), 90), `Extracting ${done}/${total}…`);
+    }
+    await zip.close();
+
+  } else if (ext === 'pak') {
+    await extractPak(input, outputDir, emit);
+
+  } else if (ext === 'wad') {
+    await extractWad(input, outputDir, emit);
+
+  } else if (ext === 'rpf') {
+    await extractRpf(input, outputDir, emit);
+
+  } else {
+    throw new Error(`Unsupported game archive format: .${ext}`);
+  }
+
+  emit(90, 'Finalizing…');
+}
+
+// ── PAK (Unreal Engine 4/5) ──────────────────────────────────────────────────
+async function extractPak(input, outputDir, emit) {
+  emit(20, 'Reading PAK footer…');
+
+  const fd = fs.openSync(input, 'r');
+  const stat = fs.fstatSync(fd);
+  const fileSize = stat.size;
+
+  // UE4/5 PAK magic: 0x5A6F12E1 at footer
+  // Footer size varies by version: V4=44, V8+=53, V11(UE5)+=61
+  const MAGIC = 0x5A6F12E1;
+  const footerBuf = Buffer.alloc(256);
+  fs.readSync(fd, footerBuf, 0, 256, Math.max(0, fileSize - 256));
+
+  // Search for magic in footer region
+  let magicOffset = -1;
+  for (let i = footerBuf.length - 44; i >= 0; i--) {
+    if (footerBuf.readUInt32LE(i) === MAGIC) {
+      magicOffset = i;
+      break;
+    }
+  }
+
+  if (magicOffset === -1) {
+    fs.closeSync(fd);
+    // Try simpler uncompressed PAK (some games use simple concatenation)
+    fs.writeFileSync(path.join(outputDir, 'extraction_note.txt'),
+      'PAK format not recognized. This may be a custom or encrypted PAK.\n' +
+      'Supported: Unreal Engine 4 PAK v1-v4, UE5 v11.\n' +
+      'For encrypted PAKs, an AES key is required.', 'utf-8');
+    return;
+  }
+
+  const pakMagicPos = fileSize - 256 + magicOffset;
+  const version = footerBuf.readUInt32LE(magicOffset + 4);
+  emit(30, `PAK version: ${version}…`);
+
+  // Read index offset and size
+  let indexOffset, indexSize;
+  if (version >= 11) {
+    // UE5 format
+    indexOffset = Number(footerBuf.readBigInt64LE(magicOffset + 8));
+    indexSize   = Number(footerBuf.readBigInt64LE(magicOffset + 16));
+  } else {
+    indexOffset = Number(footerBuf.readBigInt64LE(magicOffset + 8));
+    indexSize   = Number(footerBuf.readBigInt64LE(magicOffset + 16));
+  }
+
+  emit(40, 'Reading file index…');
+
+  if (indexOffset <= 0 || indexOffset >= fileSize || indexSize <= 0 || indexSize > fileSize) {
+    fs.closeSync(fd);
+    fs.writeFileSync(path.join(outputDir, 'extraction_note.txt'),
+      `PAK v${version} detected but index appears encrypted or corrupted.\n` +
+      'Encrypted PAKs require the AES-256 key from the game files.', 'utf-8');
+    return;
+  }
+
+  const indexBuf = Buffer.alloc(Math.min(indexSize, 50 * 1024 * 1024)); // Cap at 50MB
+  fs.readSync(fd, indexBuf, 0, indexBuf.length, indexOffset);
+
+  // Parse mount point (FString: int32 len + chars + null)
+  let pos = 0;
+  const mountPointLen = indexBuf.readInt32LE(pos); pos += 4;
+  if (mountPointLen > 0 && mountPointLen < 1024) {
+    pos += mountPointLen; // skip mount point string
+  }
+
+  const fileCount = indexBuf.readInt32LE(pos); pos += 4;
+  emit(50, `Found ${fileCount} files…`);
+
+  if (fileCount <= 0 || fileCount > 1000000) {
+    fs.closeSync(fd);
+    fs.writeFileSync(path.join(outputDir, 'extraction_note.txt'),
+      `PAK v${version}: ${fileCount} files detected. May be encrypted or unsupported variant.`, 'utf-8');
+    return;
+  }
+
+  // Extract files
+  let extracted = 0;
+  for (let i = 0; i < Math.min(fileCount, 10000); i++) {
+    try {
+      // Read filename (FString)
+      const nameLen = indexBuf.readInt32LE(pos); pos += 4;
+      if (nameLen <= 0 || nameLen > 1024 || pos + nameLen > indexBuf.length) break;
+      const fileName = indexBuf.slice(pos, pos + nameLen - 1).toString('utf-8'); pos += nameLen;
+
+      // Read entry: offset(8), compSize(8), uncompSize(8), compressionMethod(4), hash(20)
+      const dataOffset = Number(indexBuf.readBigInt64LE(pos)); pos += 8;
+      const compSize   = Number(indexBuf.readBigInt64LE(pos)); pos += 8;
+      const uncompSize = Number(indexBuf.readBigInt64LE(pos)); pos += 8;
+      const compMethod = indexBuf.readUInt32LE(pos); pos += 4;
+      pos += 20; // skip SHA1 hash
+
+      if (version >= 3) pos += 1; // encrypted flag
+      if (version >= 4) pos += 4; // compression block count
+
+      // Extract uncompressed files
+      if (compMethod === 0 && dataOffset > 0 && uncompSize > 0 && uncompSize < 500 * 1024 * 1024) {
+        const fileBuf = Buffer.alloc(uncompSize);
+        fs.readSync(fd, fileBuf, 0, uncompSize, dataOffset);
+
+        const outPath = path.join(outputDir, fileName.replace(/\.\.\//g, ''));
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, fileBuf);
+        extracted++;
+      }
+
+      emit(50 + Math.round((i / fileCount) * 40), `Extracting ${i + 1}/${fileCount}…`);
+    } catch { break; }
+  }
+
+  fs.closeSync(fd);
+  fs.writeFileSync(path.join(outputDir, 'extraction_info.txt'),
+    `PAK v${version}\nTotal entries: ${fileCount}\nExtracted: ${extracted}\n` +
+    (extracted < fileCount ? 'Note: Some files may be compressed or encrypted and were skipped.' : ''), 'utf-8');
+}
+
+// ── WAD (Doom) ───────────────────────────────────────────────────────────────
+async function extractWad(input, outputDir, emit) {
+  emit(20, 'Reading WAD header…');
+
+  const data = fs.readFileSync(input);
+  const magic = data.slice(0, 4).toString('ascii');
+
+  if (magic !== 'IWAD' && magic !== 'PWAD') {
+    throw new Error(`Not a valid WAD file (magic: ${magic})`);
+  }
+
+  const numLumps  = data.readInt32LE(4);
+  const dirOffset = data.readInt32LE(8);
+
+  emit(30, `${magic}: ${numLumps} lumps found…`);
+
+  for (let i = 0; i < numLumps; i++) {
+    const entryOffset = dirOffset + (i * 16);
+    const lumpOffset  = data.readInt32LE(entryOffset);
+    const lumpSize    = data.readInt32LE(entryOffset + 4);
+    let   lumpName    = data.slice(entryOffset + 8, entryOffset + 16).toString('ascii').replace(/\0/g, '');
+
+    if (lumpSize > 0 && lumpName) {
+      // Sanitize name
+      lumpName = lumpName.replace(/[^a-zA-Z0-9_.-]/g, '_');
+      const outPath = path.join(outputDir, lumpName);
+      fs.writeFileSync(outPath, data.slice(lumpOffset, lumpOffset + lumpSize));
+    }
+
+    emit(30 + Math.round((i / numLumps) * 60), `Extracting ${i + 1}/${numLumps}…`);
+  }
+}
+
+// ── RPF (RAGE / GTA V) ───────────────────────────────────────────────────────
+async function extractRpf(input, outputDir, emit) {
+  emit(20, 'Reading RPF header…');
+
+  const fd = fs.openSync(input, 'r');
+  const headerBuf = Buffer.alloc(16);
+  fs.readSync(fd, headerBuf, 0, 16, 0);
+
+  const magic = headerBuf.readUInt32BE(0);
+  // RPF7 = 0x52504637, RPF8 = 0x52504638
+  if (magic !== 0x52504637 && magic !== 0x52504638) {
+    fs.closeSync(fd);
+    throw new Error(`Not a valid RPF file (magic: 0x${magic.toString(16)}). Only RPF7/RPF8 (GTA V/RDR2) supported.`);
+  }
+
+  const tocSize    = headerBuf.readUInt32LE(4);
+  const numEntries = headerBuf.readUInt32LE(8);
+
+  emit(30, `RPF${magic === 0x52504637 ? '7' : '8'}: ${numEntries} entries…`);
+
+  // Read TOC
+  const tocBuf = Buffer.alloc(tocSize);
+  fs.readSync(fd, tocBuf, 0, tocSize, 16);
+
+  // RPF7 entries are 16 bytes each
+  // Due to potential encryption, do best-effort extraction
+  let extracted = 0;
+  const info = [];
+
+  for (let i = 0; i < Math.min(numEntries, 5000); i++) {
+    try {
+      const entryOff = i * 16;
+      if (entryOff + 16 > tocBuf.length) break;
+
+      const nameHash = tocBuf.readUInt32LE(entryOff);
+      const dataOff  = tocBuf.readUInt32LE(entryOff + 4);
+      const flags    = tocBuf.readUInt32LE(entryOff + 8);
+      const size     = tocBuf.readUInt32LE(entryOff + 12);
+
+      if (size > 0 && size < 100 * 1024 * 1024 && dataOff > 0) {
+        const fileBuf = Buffer.alloc(Math.min(size, 50 * 1024 * 1024));
+        fs.readSync(fd, fileBuf, 0, fileBuf.length, dataOff * 512);
+
+        const outName = `entry_${i}_0x${nameHash.toString(16)}`;
+        fs.writeFileSync(path.join(outputDir, outName), fileBuf);
+        extracted++;
+      }
+      info.push(`Entry ${i}: hash=0x${nameHash.toString(16)} offset=${dataOff} size=${size}`);
+    } catch { break; }
+
+    emit(30 + Math.round((i / numEntries) * 60), `Processing ${i + 1}/${numEntries}…`);
+  }
+
+  fs.closeSync(fd);
+  fs.writeFileSync(path.join(outputDir, 'extraction_info.txt'),
+    `RPF${magic === 0x52504637 ? '7' : '8'}\nTotal entries: ${numEntries}\nExtracted: ${extracted}\n\n` +
+    'Note: RPF archives are often encrypted. File names are hashed and may not be recoverable.\n' +
+    'For full extraction, use specialized tools like OpenIV.\n\n' +
+    info.slice(0, 100).join('\n'), 'utf-8');
 }

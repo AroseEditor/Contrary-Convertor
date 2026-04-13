@@ -5,6 +5,10 @@ const state = {
   currentFile: null,
   selectedFormat: null,
   converting: false,
+  downloading: false,
+  downloadMode: false,
+  threads: 4,
+  ytdlpQuality: '1080',
   history: [],
 };
 
@@ -21,7 +25,12 @@ const srcRes          = $('src-res');
 const srcFps          = $('src-fps');
 const srcBr           = $('src-br');
 const formatSection   = $('format-section');
-const formatChips     = $('format-chips');
+const formatDropdown  = $('format-dropdown');
+const formatToggle    = $('format-toggle');
+const formatToggleText= $('format-toggle-text');
+const formatMenu      = $('format-menu');
+const formatSearch    = $('format-search');
+const formatOptions   = $('format-options');
 const optionsSection  = $('options-section');
 const optionsToggle   = $('options-toggle');
 const optionsBody     = $('options-body');
@@ -45,6 +54,30 @@ const cancelBtn       = $('cancel-btn');
 const historyList     = $('history-list');
 const historyClearBtn = $('history-clear-btn');
 
+// Settings
+const settingsOverlay = $('settings-overlay');
+const settingsCloseBtn= $('settings-close-btn');
+const settingsBtn     = $('btn-settings');
+const threadSlider    = $('thread-slider');
+const threadCount     = $('thread-count');
+const githubLink      = $('github-link');
+
+// Download mode
+const downloadHint    = $('download-link-hint');
+const downloadSection = $('download-section');
+const downloadUrl     = $('download-url');
+const downloadGoBtn   = $('download-go-btn');
+const downloadBack    = $('download-back');
+const dlProgressSection = $('download-progress-section');
+const dlProgressBar   = $('dl-progress-bar');
+const dlProgressLabel = $('dl-progress-label');
+const dlSpeed         = $('dl-speed');
+const dlProgressPct   = $('dl-progress-pct');
+const dlDownloaded    = $('dl-downloaded');
+const dlCancelBtn     = $('dl-cancel-btn');
+const ytdlpQuality    = $('ytdlp-quality');
+const downloadSource  = $('download-source');
+
 // ─── Window controls ──────────────────────────────────────────────────────────
 $('btn-minimize').addEventListener('click', () => window.electronAPI.minimize());
 $('btn-maximize').addEventListener('click', () => window.electronAPI.maximize());
@@ -54,6 +87,129 @@ $('btn-close').addEventListener('click',    () => window.electronAPI.close());
 historyClearBtn.addEventListener('click', () => {
   state.history = [];
   historyList.innerHTML = '<li class="history-empty">No conversions yet — drop a file to get started</li>';
+});
+
+// ─── Settings panel ───────────────────────────────────────────────────────────
+settingsBtn.addEventListener('click', () => {
+  settingsOverlay.classList.add('open');
+});
+
+settingsCloseBtn.addEventListener('click', () => {
+  settingsOverlay.classList.remove('open');
+});
+
+settingsOverlay.addEventListener('click', (e) => {
+  if (e.target === settingsOverlay) settingsOverlay.classList.remove('open');
+});
+
+threadSlider.addEventListener('input', () => {
+  state.threads = parseInt(threadSlider.value);
+  threadCount.textContent = threadSlider.value;
+});
+
+githubLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  window.electronAPI.openExternal('https://github.com/AroseEditor/');
+});
+
+ytdlpQuality.addEventListener('change', () => {
+  state.ytdlpQuality = ytdlpQuality.value;
+});
+
+// ─── Download mode toggle ─────────────────────────────────────────────────────
+downloadHint.addEventListener('click', () => {
+  state.downloadMode = true;
+  dropzone.style.display = 'none';
+  downloadHint.style.display = 'none';
+  show(downloadSection);
+  downloadSource.innerHTML = '';
+  downloadUrl.focus();
+});
+
+downloadUrl.addEventListener('input', () => {
+  const url = downloadUrl.value.trim();
+  downloadSource.innerHTML = url ? detectSourceHtml(url) : '';
+});
+
+downloadBack.addEventListener('click', () => {
+  state.downloadMode = false;
+  dropzone.style.display = '';
+  downloadHint.style.display = '';
+  hide(downloadSection);
+  hide(dlProgressSection);
+  downloadUrl.value = '';
+});
+
+// ─── Download handler ─────────────────────────────────────────────────────────
+downloadGoBtn.addEventListener('click', startDownload);
+downloadUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') startDownload(); });
+
+async function startDownload() {
+  const url = downloadUrl.value.trim();
+  if (!url || state.downloading) return;
+
+  // Ask where to save
+  const savePath = await window.electronAPI.selectDownloadFolder();
+  if (!savePath) return;
+
+  state.downloading = true;
+  show(dlProgressSection);
+  dlProgressBar.style.width = '0%';
+  dlProgressLabel.textContent = 'Starting download…';
+  dlSpeed.textContent = '0 MB/s';
+  dlProgressPct.textContent = '0%';
+  dlDownloaded.textContent = '0 MB / ?';
+
+  window.electronAPI.onDownloadProgress(({ percent, speed, downloaded, total, message }) => {
+    const pct = Math.min(Math.max(percent || 0, 0), 100);
+    dlProgressBar.style.width = pct + '%';
+    dlProgressPct.textContent = Math.round(pct) + '%';
+    dlProgressLabel.textContent = message || 'Downloading…';
+    if (speed !== undefined) dlSpeed.textContent = (speed / (1024 * 1024)).toFixed(1) + ' MB/s';
+    if (downloaded !== undefined && total !== undefined) {
+      dlDownloaded.textContent = fmtBytes(downloaded) + ' / ' + fmtBytes(total);
+    } else if (downloaded !== undefined) {
+      dlDownloaded.textContent = fmtBytes(downloaded);
+    }
+  });
+
+  try {
+    const result = await window.electronAPI.downloadUrl({ url, savePath, threads: state.threads, quality: state.ytdlpQuality });
+    if (result.error) {
+      dlProgressLabel.textContent = '⚠ ' + result.error.slice(0, 80);
+      dlSpeed.textContent = 'Error';
+      addHistory({ status: 'error', error: result.error, inputName: url.slice(0, 50), outputName: '—' });
+    } else {
+      dlProgressBar.style.width = '100%';
+      dlProgressPct.textContent = '100%';
+      dlProgressLabel.textContent = 'Download complete!';
+      dlSpeed.textContent = 'Done';
+      const outName = result.filePath.split(/[\\/]/).pop();
+      addHistory({
+        status: 'success',
+        inputName: url.length > 50 ? url.slice(0, 47) + '…' : url,
+        outputName: outName,
+        outputPath: result.filePath,
+        sizeBefore: 0,
+        sizeAfter: result.fileSize,
+      });
+      setTimeout(() => hide(dlProgressSection), 3000);
+    }
+  } catch (err) {
+    dlProgressLabel.textContent = '⚠ ' + err.message;
+    dlSpeed.textContent = 'Error';
+  }
+
+  state.downloading = false;
+  window.electronAPI.removeDownloadListener();
+}
+
+dlCancelBtn.addEventListener('click', () => {
+  window.electronAPI.cancelDownload();
+  state.downloading = false;
+  hide(dlProgressSection);
+  dlProgressLabel.textContent = 'Cancelled';
+  window.electronAPI.removeDownloadListener();
 });
 
 // ─── Drag events ──────────────────────────────────────────────────────────────
@@ -79,111 +235,192 @@ async function loadFile(filePath) {
     if (info.error) { showError('Could not read file: ' + info.error); return; }
     state.currentFile = info;
     renderFileInfo(info);
-    renderFormatChips(info);
+    populateDropdown(info);
     applySourceDefaults(info);
     show(fileInfoSection); show(formatSection); show(convertSection);
   } catch (err) { showError('Detection failed: ' + err.message); }
 }
 
 // ─── Render file info ─────────────────────────────────────────────────────────
-const CAT_COLORS = {
-  image:'#ff7070', video:'#ff9a5a', audio:'#7bcffa',
-  document:'#c0b0f8', data:'#6af8a0', spreadsheet:'#f8e060',
-  archive:'#f8c660', web:'#60f8f8', text:'#f8f8f8',
-};
-
 function renderFileInfo(info) {
-  fileTypeBadge.textContent = (info.ext || 'FILE').toUpperCase().slice(0, 6);
-  fileTypeBadge.style.color = CAT_COLORS[info.category] || 'var(--red-300)';
-  fileNameEl.textContent    = info.name;
-  fileDetailsEl.textContent = `${info.mime || 'unknown'} · ${fmtBytes(info.size)}`;
+  fileTypeBadge.textContent = info.ext.toUpperCase().slice(0, 5);
+  fileNameEl.textContent = info.name;
+  const sizeMB = (info.size / (1024 * 1024)).toFixed(1);
+  fileDetailsEl.textContent = `${info.mime} · ${sizeMB} MB`;
+  dropzone.classList.add('file-loaded');
 
-  // Source media tags
-  if (info.probe) {
-    const p = info.probe;
+  // Source media info
+  if (info.probe && (info.probe.video || info.probe.audio)) {
     sourceMeta.style.display = 'flex';
-    if (p.video) {
-      srcRes.textContent = `${p.video.width}×${p.video.height}`;
-      srcRes.style.display = 'inline-flex';
-      if (p.video.fps) { srcFps.textContent = `${p.video.fps} fps`; srcFps.style.display = 'inline-flex'; }
-      else srcFps.style.display = 'none';
-    } else {
-      srcRes.style.display = 'none';
-      srcFps.style.display = 'none';
+    if (info.probe.video) {
+      srcRes.textContent = `${info.probe.video.width}×${info.probe.video.height}`;
+      srcFps.textContent = info.probe.video.fps ? `${info.probe.video.fps} fps` : '';
+      srcBr.textContent = info.probe.bitrate ? `${info.probe.bitrate} kbps` : '';
+    } else if (info.probe.audio) {
+      srcRes.textContent = info.probe.audio.codec || '';
+      srcFps.textContent = `${info.probe.audio.sampleRate || '?'} Hz`;
+      srcBr.textContent = info.probe.audio.bitrate ? `${info.probe.audio.bitrate} kbps` : '';
     }
-    const br = (p.audio && p.audio.bitrate) || (p.video && p.video.bitrate) || p.bitrate;
-    if (br) { srcBr.textContent = `${br} kbps`; srcBr.style.display = 'inline-flex'; }
-    else srcBr.style.display = 'none';
   } else {
     sourceMeta.style.display = 'none';
   }
 }
 
-// ─── Apply source defaults ────────────────────────────────────────────────────
-function applySourceDefaults(info) {
-  if (!info.probe) return;
-  const p = info.probe;
-
-  if (p.video) {
-    // Video resolution placeholders = source
-    if (p.video.width)  $('opt-vid-width').placeholder  = `${p.video.width} (source)`;
-    if (p.video.height) $('opt-vid-height').placeholder = `${p.video.height} (source)`;
-    if (p.video.fps)    $('opt-framerate').placeholder  = `${p.video.fps} (source)`;
+function applySourceDefaults(p) {
+  if (!p.probe) return;
+  if (p.probe.video) {
+    if (p.probe.video.width)  $('opt-vid-width').placeholder  = `${p.probe.video.width} (source)`;
+    if (p.probe.video.height) $('opt-vid-height').placeholder = `${p.probe.video.height} (source)`;
+    if (p.probe.video.fps)    $('opt-framerate').placeholder  = `${p.probe.video.fps} (source)`;
   }
-
-  if (p.audio && p.audio.bitrate) {
-    // Select closest bitrate option
-    const src = p.audio.bitrate;
+  if (p.probe.audio && p.probe.audio.bitrate) {
+    const src = p.probe.audio.bitrate;
     const thresholds = [64, 128, 192, 256, 320];
     const closest = thresholds.reduce((a, b) => Math.abs(b - src) < Math.abs(a - src) ? b : a);
     const sel = $('opt-bitrate');
     const opt = [...sel.options].find(o => parseInt(o.value) >= closest);
     if (opt) sel.value = opt.value;
-    else sel.value = '320k'; // max
+    else sel.value = '320k';
   }
 }
 
-// ─── Format chips ─────────────────────────────────────────────────────────────
-function renderFormatChips(info) {
-  formatChips.innerHTML = '';
+// ─── Format descriptions for dropdown ─────────────────────────────────────────
+const FORMAT_DESC = {
+  // Image
+  jpg:  'JPEG image', png:  'Lossless image', webp: 'Web image', avif: 'AV1 image',
+  gif:  'Animated image', tiff: 'TIFF image', bmp:  'Bitmap image', ico:  'Icon file',
+  // Video
+  mp4:  'H.264 video', webm: 'VP9 video', mov:  'QuickTime', avi:  'Legacy video',
+  mkv:  'Matroska video',
+  // Audio
+  mp3:  'MPEG audio', wav:  'Lossless PCM', ogg:  'Vorbis audio', flac: 'Lossless audio',
+  aac:  'AAC audio', opus: 'Opus audio',
+  // Document
+  txt:  'Plain text', html: 'Web page', pdf:  'PDF document',
+  // Data
+  json: 'JSON data', csv:  'CSV spreadsheet', xml:  'XML data', yaml: 'YAML config',
+  xlsx: 'Excel sheet',
+  // Config
+  toml: 'TOML config', env:  'Dotenv file',
+  // 3D
+  glb:  'glTF binary', obj:  'Wavefront OBJ', fbx:  'FBX model',
+  // Special
+  fix:         'Platform compatibility fix',
+  'extract-text':   'Extract text content',
+  'extract-images': 'Extract images from PDF',
+  'extract-fonts':  'Extract embedded fonts',
+  'extract':        'Extract archive contents',
+};
+
+// ─── Dropdown ─────────────────────────────────────────────────────────────────
+function populateDropdown(info) {
+  formatOptions.innerHTML = '';
   state.selectedFormat = null;
+  formatToggleText.textContent = 'Select output format…';
+  formatToggleText.classList.remove('has-value');
   updateConvertBtn();
 
   if (!info.outputFormats || !info.outputFormats.length) {
-    formatChips.innerHTML = '<span style="color:var(--text-faint);font-size:12px;">No conversions available for this file type.</span>';
+    formatOptions.innerHTML = '<li class="format-option-divider">No conversions available</li>';
     return;
   }
 
+  // Group formats by type
+  const groups = {};
   info.outputFormats.forEach(fmt => {
-    const chip = document.createElement('button');
-    chip.className = 'format-chip';
-    chip.textContent = fmt.toUpperCase();
-    chip.dataset.format = fmt;
-    chip.setAttribute('role', 'option');
-    chip.setAttribute('aria-selected', 'false');
-    chip.setAttribute('title', `Convert to ${fmt.toUpperCase()}`);
-    chip.addEventListener('click', () => selectFormat(fmt, info.category, info.probe));
-    formatChips.appendChild(chip);
+    let group = 'Conversion';
+    if (fmt.startsWith('extract')) group = 'Extraction';
+    else if (fmt === 'fix') group = 'Fix';
+    else if (['json','yaml','csv','xml','toml','env','xlsx'].includes(fmt)) group = 'Data / Config';
+    else if (['glb','obj','fbx'].includes(fmt)) group = '3D Models';
+    else if (['mp4','webm','mov','avi','mkv','gif'].includes(fmt)) group = 'Video';
+    else if (['mp3','wav','ogg','flac','aac','opus'].includes(fmt)) group = 'Audio';
+    else if (['jpg','png','webp','avif','tiff','bmp','ico'].includes(fmt)) group = 'Image';
+    else if (['txt','html','pdf'].includes(fmt)) group = 'Document';
+    if (!groups[group]) groups[group] = [];
+    groups[group].push(fmt);
   });
 
-  // Add FIX chip for video/audio files
-  if (info.category === 'video' || info.category === 'audio') {
-    const fixChip = document.createElement('button');
-    fixChip.className = 'format-chip format-chip-fix';
-    fixChip.textContent = '🔧 FIX';
-    fixChip.dataset.format = 'fix';
-    fixChip.setAttribute('role', 'option');
-    fixChip.setAttribute('aria-selected', 'false');
-    fixChip.setAttribute('title', 'Fix compatibility for social media & mobile');
-    fixChip.addEventListener('click', () => selectFormat('fix', info.category, info.probe));
-    formatChips.appendChild(fixChip);
+  // Render groups
+  for (const [groupName, fmts] of Object.entries(groups)) {
+    const divider = document.createElement('li');
+    divider.className = 'format-option-divider';
+    divider.textContent = groupName;
+    formatOptions.appendChild(divider);
+
+    fmts.forEach(fmt => {
+      const li = document.createElement('li');
+      li.className = 'format-option';
+      li.dataset.format = fmt;
+      li.dataset.search = `${fmt} ${FORMAT_DESC[fmt] || ''} ${groupName}`.toLowerCase();
+      li.innerHTML = `
+        <span class="format-option-label">${fmt.toUpperCase()}</span>
+        <span class="format-option-desc">${FORMAT_DESC[fmt] || ''}</span>
+      `;
+      li.addEventListener('click', () => selectFormat(fmt, info.category, info.probe));
+      formatOptions.appendChild(li);
+    });
   }
 }
 
+// Toggle dropdown
+formatToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isOpen = formatDropdown.classList.toggle('open');
+  if (isOpen) {
+    formatSearch.value = '';
+    filterDropdown('');
+    setTimeout(() => formatSearch.focus(), 50);
+  }
+});
+
+// Search filter
+formatSearch.addEventListener('input', () => filterDropdown(formatSearch.value));
+
+function filterDropdown(query) {
+  const q = query.toLowerCase().trim();
+  formatOptions.querySelectorAll('.format-option').forEach(opt => {
+    opt.classList.toggle('hidden', q && !opt.dataset.search.includes(q));
+  });
+  // Hide dividers with no visible children after them
+  formatOptions.querySelectorAll('.format-option-divider').forEach(div => {
+    let next = div.nextElementSibling;
+    let hasVisible = false;
+    while (next && !next.classList.contains('format-option-divider')) {
+      if (!next.classList.contains('hidden')) hasVisible = true;
+      next = next.nextElementSibling;
+    }
+    div.style.display = hasVisible ? '' : 'none';
+  });
+}
+
+// Close dropdown on outside click
+document.addEventListener('click', (e) => {
+  if (!formatDropdown.contains(e.target)) {
+    formatDropdown.classList.remove('open');
+  }
+});
+
+// Keyboard nav
+formatSearch.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    formatDropdown.classList.remove('open');
+  } else if (e.key === 'Enter') {
+    const visible = [...formatOptions.querySelectorAll('.format-option:not(.hidden)')];
+    if (visible.length === 1) visible[0].click();
+  }
+});
+
 function selectFormat(fmt, category, probe) {
-  document.querySelectorAll('.format-chip').forEach(c => { c.classList.remove('selected'); c.setAttribute('aria-selected','false'); });
-  const chip = [...formatChips.children].find(c => c.dataset && c.dataset.format === fmt);
-  if (chip) { chip.classList.add('selected'); chip.setAttribute('aria-selected','true'); }
+  // Update dropdown display
+  formatOptions.querySelectorAll('.format-option').forEach(o => o.classList.remove('selected'));
+  const opt = formatOptions.querySelector(`[data-format="${fmt}"]`);
+  if (opt) opt.classList.add('selected');
+
+  formatToggleText.textContent = `${fmt.toUpperCase()} — ${FORMAT_DESC[fmt] || fmt}`;
+  formatToggleText.classList.add('has-value');
+  formatDropdown.classList.remove('open');
+
   state.selectedFormat = fmt;
   updateOptionsPanel(category, fmt, probe);
   updateConvertBtn();
@@ -205,8 +442,16 @@ function updateOptionsPanel(category, format, probe) {
   const audioOnlyFmt = ['mp3','wav','ogg','flac','aac','opus'];
 
   if (format === 'fix') {
-    // Fix mode — only show platform selection
     optFix.style.display = 'flex';
+  } else if (format.startsWith('extract')) {
+    // No special options for extraction
+    hide(optionsSection);
+  } else if (['json','yaml','csv','xml','toml','env','xlsx'].includes(format)) {
+    // No special options for data/config conversion
+    hide(optionsSection);
+  } else if (['glb','obj','fbx'].includes(format)) {
+    // No special options for 3D
+    hide(optionsSection);
   } else if (category === 'image') {
     optImage.style.display = 'flex';
     imgPresetSel.value = 'lossless';
@@ -227,115 +472,91 @@ function updateOptionsPanel(category, format, probe) {
   }
 }
 
-// ─── Quality preset dropdowns ─────────────────────────────────────────────────
-const PRESET_QUALITY_MAP = { lossless: 100, high: 90, medium: 75, low: 55, verylow: 30 };
-
-imgPresetSel.addEventListener('change', () => {
-  const p = imgPresetSel.value;
-  if (p === 'lossless') {
-    qualitySliderRow.style.display = 'none';
-    qualitySlider.value = 100;
-    qualityDisplay.textContent = '100%';
-    qualitySlider.style.setProperty('--pct', '100%');
-  } else {
-    qualitySliderRow.style.display = 'flex';
-    const v = PRESET_QUALITY_MAP[p] || 75;
-    qualitySlider.value = v;
-    qualityDisplay.textContent = v + '%';
-    qualitySlider.style.setProperty('--pct', v + '%');
-  }
-});
-
-qualitySlider.addEventListener('input', () => {
-  const v = qualitySlider.value;
-  qualityDisplay.textContent = v + '%';
-  qualitySlider.style.setProperty('--pct', v + '%');
-});
-
-// ─── Gather options ───────────────────────────────────────────────────────────
-function gatherOptions() {
-  // Determine which quality preset is active based on visible panel
-  let qualityPreset = 'lossless';
-  if (optImage.style.display !== 'none') qualityPreset = imgPresetSel.value;
-  else if (optVideo.style.display !== 'none') qualityPreset = vidPresetSel.value;
-
-  return {
-    qualityPreset,
-    quality:      parseInt(qualitySlider.value) || 100,
-    width:        $('opt-width').value       || null,
-    height:       $('opt-height').value      || null,
-    bitrate:      $('opt-bitrate').value     || '320k',
-    vidWidth:     $('opt-vid-width').value   || null,
-    vidHeight:    $('opt-vid-height').value  || null,
-    framerate:    $('opt-framerate').value   || null,
-    fixPlatform:  fixPlatformSel.value       || 'whatsapp',
-    sourceBitrate: (state.currentFile && state.currentFile.probe && state.currentFile.probe.audio)
-      ? state.currentFile.probe.audio.bitrate : null,
-  };
+// Quality preset → slider
+if (imgPresetSel) {
+  imgPresetSel.addEventListener('change', () => {
+    qualitySliderRow.style.display = imgPresetSel.value === 'custom' ? 'flex' : 'none';
+  });
+}
+if (qualitySlider) {
+  qualitySlider.addEventListener('input', () => { qualityDisplay.textContent = qualitySlider.value; });
 }
 
-// ─── Convert ─────────────────────────────────────────────────────────────────
+// ─── Convert ──────────────────────────────────────────────────────────────────
 convertBtn.addEventListener('click', async () => {
   if (!state.currentFile || !state.selectedFormat || state.converting) return;
   state.converting = true;
-  convertBtn.disabled = true;
+  updateConvertBtn();
   show(progressSection);
   setProgress(0, 'Starting…');
 
-  window.electronAPI.removeProgressListener();
+  const options = gatherOptions();
+
   window.electronAPI.onProgress(({ percent, message }) => setProgress(percent, message));
-  window.electronAPI.onError(({ message }) => {
-    state.converting = false;
-    convertBtn.disabled = false;
-    hide(progressSection);
-    addHistoryItem({ status:'error', inputName: state.currentFile.name, outputName:'—', error: message });
-    showError(message);
-  });
 
   try {
     const result = await window.electronAPI.convertFile({
       filePath: state.currentFile.path,
       outputFormat: state.selectedFormat,
-      options: gatherOptions(),
+      options,
     });
 
-    state.converting = false;
-    convertBtn.disabled = false;
-
     if (result.error) {
-      hide(progressSection);
       showError(result.error);
-      addHistoryItem({ status:'error', inputName: state.currentFile.name, outputName:'—', error: result.error });
+      addHistory({ status: 'error', error: result.error,
+        inputName: state.currentFile.name,
+        outputName: '—', sizeBefore: state.currentFile.size });
     } else {
       setProgress(100, 'Done!');
       flashSuccess();
-      addHistoryItem({
+      const outName = result.outputPath.split(/[\\/]/).pop();
+      addHistory({
         status: 'success',
-        inputName:  state.currentFile.name,
-        outputName: result.outputPath.split(/[\\/]/).pop(),
+        inputName: state.currentFile.name,
+        outputName: outName,
         outputPath: result.outputPath,
         sizeBefore: state.currentFile.size,
-        sizeAfter:  result.outputSize,
+        sizeAfter: result.outputSize,
       });
       setTimeout(() => hide(progressSection), 2000);
     }
   } catch (err) {
-    state.converting = false;
-    convertBtn.disabled = false;
-    hide(progressSection);
     showError(err.message);
   }
-});
 
-cancelBtn.addEventListener('click', () => {
   state.converting = false;
-  convertBtn.disabled = false;
-  hide(progressSection);
+  updateConvertBtn();
   window.electronAPI.removeProgressListener();
 });
 
+function gatherOptions() {
+  const o = {};
+  // Image
+  o.width  = $('opt-img-width').value || null;
+  o.height = $('opt-img-height').value || null;
+  o.qualityPreset = imgPresetSel.value;
+  o.quality = qualitySlider.value;
+  // Video
+  o.vidWidth  = $('opt-vid-width').value || null;
+  o.vidHeight = $('opt-vid-height').value || null;
+  o.framerate = $('opt-framerate').value || null;
+  o.qualityPreset = vidPresetSel.value || imgPresetSel.value;
+  // Audio
+  o.bitrate = $('opt-bitrate').value;
+  if (state.currentFile && state.currentFile.probe && state.currentFile.probe.audio) {
+    o.sourceBitrate = state.currentFile.probe.audio.bitrate;
+  }
+  // Fix
+  o.fixPlatform = fixPlatformSel.value;
+  return o;
+}
+
 // ─── History ──────────────────────────────────────────────────────────────────
-function addHistoryItem(item) {
+function addHistory(item) {
+  state.history.unshift(item);
+  if (state.history.length > 10) state.history.pop();
+
+  // Remove empty message
   const empty = historyList.querySelector('.history-empty');
   if (empty) empty.remove();
 
@@ -343,7 +564,7 @@ function addHistoryItem(item) {
   li.className = 'history-item';
 
   const icon = item.status === 'success'
-    ? `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="1.5,5 3.8,7.5 8.5,2.5"/></svg>`
+    ? `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 5.5L4 7.5L8 3"/></svg>`
     : `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5"/></svg>`;
 
   const detail = item.status === 'success' && item.sizeAfter && item.sizeBefore
@@ -388,7 +609,10 @@ function resetUI(clearFile = true) {
   dropzone.classList.remove('drag-over','file-loaded','success-flash');
   hide(fileInfoSection); hide(formatSection); hide(optionsSection); hide(progressSection);
   optionsBody.classList.remove('open');
-  formatChips.innerHTML = '';
+  formatOptions.innerHTML = '';
+  formatToggleText.textContent = 'Select output format…';
+  formatToggleText.classList.remove('has-value');
+  formatDropdown.classList.remove('open');
   setProgress(0, 'Converting…');
   updateConvertBtn();
   window.electronAPI.removeProgressListener();
@@ -425,6 +649,50 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ─── Prevent native browser drop nav ─────────────────────────────────────────
-document.addEventListener('dragover', e => e.preventDefault());
-document.addEventListener('drop',     e => e.preventDefault());
+function detectSourceHtml(url) {
+  const sources = [
+    { pattern: /youtube\.com|youtu\.be/i,   name: 'YouTube',   method: 'yt-dlp' },
+    { pattern: /instagram\.com/i,           name: 'Instagram', method: 'yt-dlp' },
+    { pattern: /t\.me|telegram\./i,         name: 'Telegram',  method: 'yt-dlp' },
+    { pattern: /tiktok\.com/i,              name: 'TikTok',    method: 'yt-dlp' },
+    { pattern: /twitter\.com|x\.com/i,      name: 'Twitter/X', method: 'yt-dlp' },
+    { pattern: /facebook\.com|fb\.watch/i,  name: 'Facebook',  method: 'yt-dlp' },
+    { pattern: /twitch\.tv/i,               name: 'Twitch',    method: 'yt-dlp' },
+    { pattern: /reddit\.com/i,              name: 'Reddit',    method: 'yt-dlp' },
+    { pattern: /vimeo\.com/i,               name: 'Vimeo',     method: 'yt-dlp' },
+    { pattern: /soundcloud\.com/i,          name: 'SoundCloud', method: 'yt-dlp' },
+  ];
+
+  const match = sources.find(s => s.pattern.test(url));
+  let html = '';
+
+  if (match) {
+    html += `<span class="download-source-tag">${match.name}</span>`;
+    html += `<span class="download-source-tag">via ${match.method}</span>`;
+    const q = state.ytdlpQuality;
+    const qLabel = q === 'best' ? 'Lossless' : q === 'audio' ? 'Audio Only' : q + 'p';
+    html += `<span class="download-source-tag">${qLabel}</span>`;
+  } else {
+    // Detect file type from extension
+    try {
+      const u = new URL(url);
+      const ext = u.pathname.split('.').pop().toLowerCase();
+      const types = {
+        mp4: 'Video', mkv: 'Video', avi: 'Video', mov: 'Video', webm: 'Video',
+        mp3: 'Audio', flac: 'Audio', wav: 'Audio', ogg: 'Audio', aac: 'Audio',
+        jpg: 'Image', jpeg: 'Image', png: 'Image', gif: 'Image', webp: 'Image', svg: 'Image',
+        zip: 'Archive', rar: 'Archive', '7z': 'Archive', tar: 'Archive',
+        pdf: 'Document', exe: 'Executable', apk: 'Android App',
+      };
+      const type = types[ext];
+      html += `<span class="download-source-tag">Direct Link</span>`;
+      if (type) html += `<span class="download-source-tag">${type}</span>`;
+      if (ext) html += `<span class="download-source-tag">.${ext}</span>`;
+    } catch {
+      html += `<span class="download-source-tag">Direct Link</span>`;
+    }
+    html += `<span class="download-source-tag">${state.threads} thread${state.threads > 1 ? 's' : ''}</span>`;
+  }
+
+  return html;
+}
