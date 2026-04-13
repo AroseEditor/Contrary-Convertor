@@ -1,0 +1,10 @@
+node_modules/
+dist/
+out/
+.DS_Store
+Thumbs.db
+*.log
+*.lock
+!package-lock.json
+.env
+Final Release/

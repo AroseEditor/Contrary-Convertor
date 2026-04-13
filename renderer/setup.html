@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contrary Convertor — Setting Up</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="setup.css" />
+</head>
+<body>
+  <div class="setup-bg" aria-hidden="true"></div>
+
+  <div class="setup-shell">
+    <!-- Logo -->
+    <div class="setup-logo" aria-label="Contrary Convertor">
+      <svg class="logo-diamond" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path d="M16 2L30 10V22L16 30L2 22V10L16 2Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M16 2V30M2 10L30 22M30 10L2 22" stroke="currentColor" stroke-width="0.6" stroke-opacity="0.4"/>
+      </svg>
+      <span class="logo-name">CONTRARY CONVERTOR</span>
+    </div>
+
+    <!-- Stage label -->
+    <p class="setup-stage" id="setup-stage">Preparing environment…</p>
+
+    <!-- Progress bar -->
+    <div class="setup-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="setup-track">
+      <div class="setup-bar" id="setup-bar"></div>
+      <div class="setup-shimmer" aria-hidden="true"></div>
+    </div>
+
+    <!-- Percent -->
+    <p class="setup-pct" id="setup-pct">0%</p>
+
+    <!-- Log line -->
+    <p class="setup-log" id="setup-log">Downloading dependencies…</p>
+
+    <!-- Developer credit -->
+    <p class="setup-dev">Developer: Ayush.ue5</p>
+  </div>
+
+  <script src="setup-renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contrary Convertor — Local File Conversion</title>
+  <meta name="description" content="Convert 50+ file formats locally. No uploads. No limits. 100% private." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- SVG noise filter -->
+  <svg class="svg-filters" aria-hidden="true">
+    <defs>
+      <filter id="noise">
+        <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
+        <feColorMatrix type="saturate" values="0"/>
+        <feBlend in="SourceGraphic" mode="overlay" result="blend"/>
+        <feComposite in="blend" in2="SourceGraphic" operator="in"/>
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- Custom Title Bar -->
+  <header class="titlebar" id="titlebar">
+    <div class="titlebar-logo">
+      <svg class="logo-glyph" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2L20 7V17L12 22L4 17V7L12 2Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M12 2V22M4 7L20 17M20 7L4 17" stroke="currentColor" stroke-width="0.75" stroke-opacity="0.5"/>
+      </svg>
+      <span class="logo-text">CONTRARY CONVERTOR</span>
+    </div>
+    <div class="titlebar-dev">Developer: Ayush.ue5</div>
+    <div class="titlebar-controls">
+      <button class="wc-btn wc-min" id="btn-minimize" aria-label="Minimize" title="Minimize">
+        <svg viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="5.5" width="8" height="1" rx="0.5"/></svg>
+      </button>
+      <button class="wc-btn wc-max" id="btn-maximize" aria-label="Maximize" title="Maximize">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg>
+      </button>
+      <button class="wc-btn wc-close" id="btn-close" aria-label="Close" title="Close">
+        <svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.4"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main-content" id="main-content">
+
+    <!-- Drop Zone -->
+    <section class="dropzone-section">
+      <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Drop files here or click to browse">
+        <div class="dropzone-idle" id="dz-idle">
+          <div class="dz-icon" aria-hidden="true">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="8" y="16" width="48" height="36" rx="4" stroke="currentColor" stroke-width="2"/>
+              <path d="M8 24H56" stroke="currentColor" stroke-width="1.5" stroke-opacity="0.5"/>
+              <path d="M32 36V44M32 36L28 40M32 36L36 40" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="14" cy="20" r="2" fill="currentColor" fill-opacity="0.5"/>
+              <circle cx="20" cy="20" r="2" fill="currentColor" fill-opacity="0.5"/>
+              <circle cx="26" cy="20" r="2" fill="currentColor" fill-opacity="0.5"/>
+            </svg>
+          </div>
+          <p class="dz-title">Drop any file here</p>
+          <p class="dz-subtitle">or <span class="dz-browse">click to browse</span></p>
+          <p class="dz-hint">50+ formats — images, video, audio, documents, data, archives</p>
+        </div>
+        <div class="dropzone-hover" id="dz-hover" aria-hidden="true">
+          <div class="dz-icon dz-icon-drop">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M32 8L56 24V48L32 56L8 48V24L32 8Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M32 28V44M32 28L25 35M32 28L39 35" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <p class="dz-title">Release to load</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- File Info Card -->
+    <section class="file-info-section" id="file-info-section" aria-live="polite">
+      <div class="file-info-card" id="file-info-card">
+        <div class="file-info-left">
+          <div class="file-type-badge" id="file-type-badge">IMG</div>
+          <div class="file-meta">
+            <p class="file-name" id="file-name">filename.jpg</p>
+            <p class="file-details" id="file-details">image/jpeg · 2.4 MB</p>
+          </div>
+        </div>
+        <!-- Source media info (video/audio only) -->
+        <div class="source-meta" id="source-meta" style="display:none">
+          <span class="source-tag" id="src-res" title="Source resolution"></span>
+          <span class="source-tag" id="src-fps" title="Source framerate"></span>
+          <span class="source-tag" id="src-br"  title="Source bitrate"></span>
+        </div>
+        <button class="file-clear-btn" id="file-clear-btn" aria-label="Clear file" title="Clear file">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- Format Selector -->
+    <section class="format-section" id="format-section" aria-live="polite">
+      <div class="section-label">Convert to</div>
+      <div class="format-chips" id="format-chips" role="listbox" aria-label="Output format selector"></div>
+    </section>
+
+    <!-- Options Panel -->
+    <section class="options-section" id="options-section" aria-live="polite">
+      <div class="options-header">
+        <span class="section-label">Options</span>
+        <button class="options-toggle" id="options-toggle" aria-expanded="false" aria-controls="options-body">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M4 8h8M6 12h4"/></svg>
+          <span>Customize</span>
+        </button>
+      </div>
+      <div class="options-body" id="options-body">
+
+        <!-- Image Options -->
+        <div class="option-group" id="opt-image">
+          <div class="option-row">
+            <label class="option-label" for="opt-quality-preset-img">Quality</label>
+            <select class="option-select" id="opt-quality-preset-img" aria-label="Image quality preset">
+              <option value="lossless" selected>Lossless — no quality loss</option>
+              <option value="high">High — minimal loss, ~30% smaller</option>
+              <option value="medium">Medium — balanced, ~55% smaller</option>
+              <option value="low">Low — visible loss, ~75% smaller</option>
+              <option value="verylow">Very Low — heavy compression</option>
+            </select>
+          </div>
+          <div class="option-row" id="quality-slider-row" style="display:none">
+            <label class="option-label" for="opt-quality">Fine-tune</label>
+            <div class="slider-wrapper">
+              <input type="range" id="opt-quality" class="quality-slider" min="1" max="100" value="100"
+                     aria-label="Quality percentage" style="--pct:100%"/>
+              <span class="quality-value" id="quality-display">100%</span>
+            </div>
+          </div>
+          <div class="option-row">
+            <label class="option-label">Resize</label>
+            <div class="resize-inputs">
+              <input type="number" id="opt-width"  class="size-input" placeholder="W (px)" min="1" max="99999" aria-label="Width"/>
+              <span class="resize-sep">×</span>
+              <input type="number" id="opt-height" class="size-input" placeholder="H (px)" min="1" max="99999" aria-label="Height"/>
+            </div>
+          </div>
+        </div>
+
+        <!-- Video Options -->
+        <div class="option-group" id="opt-video" style="display:none">
+          <div class="option-row">
+            <label class="option-label" for="opt-quality-preset-vid">Quality</label>
+            <select class="option-select" id="opt-quality-preset-vid" aria-label="Video quality preset">
+              <option value="lossless" selected>Lossless — CRF 0 / stream copy</option>
+              <option value="high">High — CRF 16, minimal loss</option>
+              <option value="medium">Medium — CRF 23, balanced</option>
+              <option value="low">Low — CRF 28, smaller file</option>
+              <option value="verylow">Very Low — CRF 35, smallest</option>
+            </select>
+          </div>
+          <div class="option-row" id="opt-framerate-row">
+            <label class="option-label" for="opt-framerate">Framerate</label>
+            <div class="resize-inputs">
+              <input type="number" id="opt-framerate" class="size-input" placeholder="source fps"
+                     step="0.001" min="1" max="240" aria-label="Target framerate"/>
+              <span class="size-unit">fps</span>
+            </div>
+          </div>
+          <div class="option-row">
+            <label class="option-label">Resolution</label>
+            <div class="resize-inputs">
+              <input type="number" id="opt-vid-width"  class="size-input" placeholder="source W" min="1" max="7680" aria-label="Video width"/>
+              <span class="resize-sep">×</span>
+              <input type="number" id="opt-vid-height" class="size-input" placeholder="source H" min="1" max="4320" aria-label="Video height"/>
+              <span class="size-unit">px</span>
+            </div>
+          </div>
+          <p class="option-hint">Leave blank to preserve source settings (lossless = stream copy)</p>
+        </div>
+
+        <!-- Audio Options -->
+        <div class="option-group" id="opt-audio" style="display:none">
+          <div class="option-row">
+            <label class="option-label" for="opt-bitrate">Bitrate</label>
+            <select class="option-select" id="opt-bitrate" aria-label="Audio bitrate">
+              <option value="64k">64 kbps</option>
+              <option value="128k">128 kbps</option>
+              <option value="192k">192 kbps</option>
+              <option value="256k">256 kbps</option>
+              <option value="320k" selected>320 kbps (max)</option>
+            </select>
+          </div>
+          <p class="option-hint" id="audio-lossless-hint">FLAC and WAV output are always lossless — bitrate setting ignored.</p>
+        </div>
+
+        <!-- Fix / Platform Compatibility Options -->
+        <div class="option-group" id="opt-fix" style="display:none">
+          <div class="option-row">
+            <label class="option-label" for="opt-fix-platform">Fix for</label>
+            <select class="option-select" id="opt-fix-platform" aria-label="Target platform">
+              <option value="whatsapp" selected>WhatsApp — H.264 Main, 1080p, 30fps</option>
+              <option value="instagram">Instagram — H.264 High, 1080p, 30fps</option>
+              <option value="youtube">YouTube — H.264 High, 4K, 60fps</option>
+              <option value="discord">Discord — H.264 Main, 1080p, 30fps</option>
+              <option value="mobile">Mobile — H.264 Baseline, 720p, 30fps</option>
+            </select>
+          </div>
+          <p class="option-hint">Re-encodes to MP4 with H.264 + AAC, correct pixel format, faststart flag, and platform-safe resolution/bitrate caps.</p>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Convert Button -->
+    <section class="convert-section" id="convert-section">
+      <button class="convert-btn" id="convert-btn" disabled aria-label="Convert file">
+        <span class="convert-btn-shimmer" aria-hidden="true"></span>
+        <svg class="convert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M7 16V4M7 4L3 8M7 4L11 8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M17 8V20M17 20L21 16M17 20L13 16" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="convert-btn-text">CONVERT</span>
+      </button>
+    </section>
+
+    <!-- Progress -->
+    <section class="progress-section" id="progress-section" aria-live="assertive">
+      <div class="progress-header">
+        <span class="progress-label" id="progress-label">Converting…</span>
+        <span class="progress-pct"   id="progress-pct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-bar"     id="progress-bar"></div>
+        <div class="progress-shimmer" aria-hidden="true"></div>
+      </div>
+      <button class="cancel-btn" id="cancel-btn">Cancel</button>
+    </section>
+
+    <!-- History -->
+    <section class="history-section" id="history-section">
+      <div class="history-header">
+        <div class="section-label">Recent Conversions</div>
+        <button class="history-clear-btn" id="history-clear-btn" aria-label="Clear history" title="Clear history">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.5 4h11M5.5 4V3a1 1 0 011-1h3a1 1 0 011 1v1M6.5 7v4M9.5 7v4M3.5 4l.7 8.5a1 1 0 001 .9h5.6a1 1 0 001-.9L12.5 4"/>
+          </svg>
+        </button>
+      </div>
+      <ul class="history-list" id="history-list" aria-label="Conversion history" role="list">
+        <li class="history-empty">No conversions yet — drop a file to get started</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
