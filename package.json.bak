@@ -43,15 +43,11 @@
     "files": [
       "main.js",
       "preload.js",
+      "setup-preload.js",
       "renderer/**/*",
       "assets/**/*",
       "package.json",
-      "node_modules/**/*"
-    ],
-    "asarUnpack": [
-      "**/*.node",
-      "**/sharp/**/*",
-      "**/ffmpeg-static/**/*"
+      "!node_modules/**/*"
     ],
     "win": {
       "target": "nsis",
