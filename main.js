@@ -30,18 +30,43 @@ async function rESM(name) {
   return await import(name);
 }
 
-// ─── Deps check ───────────────────────────────────────────────────────────────
+// ─── Deps check (isFirstLaunch.txt flag) ──────────────────────────────────────
+function getFirstLaunchPath() {
+  // In packaged app: use Program Files install dir or userData
+  if (app.isPackaged) {
+    // Try the app's install directory first
+    const installDir = path.dirname(app.getPath('exe'));
+    const installFlag = path.join(installDir, 'isFirstLaunch.txt');
+    // If we can't write to install dir (permissions), fall back to userData
+    try {
+      fs.accessSync(installDir, fs.constants.W_OK);
+      return installFlag;
+    } catch {
+      return path.join(app.getPath('userData'), 'isFirstLaunch.txt');
+    }
+  }
+  // Dev mode: use project root
+  return path.join(__dirname, 'isFirstLaunch.txt');
+}
+
 function isDepsInstalled() {
-  if (!app.isPackaged) return true;
-  const marker = path.join(MODULES_DIR, '.cc-installed');
-  if (!fs.existsSync(marker)) return false;
+  const flagPath = getFirstLaunchPath();
+  if (!fs.existsSync(flagPath)) return false;
   try {
-    return fs.readFileSync(marker, 'utf-8').trim() === app.getVersion();
+    const content = fs.readFileSync(flagPath, 'utf-8').trim();
+    return content === 'True';
   } catch { return false; }
 }
 
 function markDepsInstalled() {
-  fs.writeFileSync(path.join(MODULES_DIR, '.cc-installed'), app.getVersion(), 'utf-8');
+  const flagPath = getFirstLaunchPath();
+  try {
+    fs.writeFileSync(flagPath, 'True', 'utf-8');
+  } catch (e) {
+    // Fallback: write to userData if install dir is read-only
+    const fallback = path.join(app.getPath('userData'), 'isFirstLaunch.txt');
+    fs.writeFileSync(fallback, 'True', 'utf-8');
+  }
 }
 
 // ─── Setup window ─────────────────────────────────────────────────────────────
