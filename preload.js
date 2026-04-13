@@ -38,4 +38,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeDownloadListener: () => {
     ipcRenderer.removeAllListeners('download:progress');
   },
+
+  // Background removal
+  bgLoadImage: (params) => ipcRenderer.invoke('bg:loadImage', params),
+  bgDetectSubject: (params) => ipcRenderer.invoke('bg:detectSubject', params),
+  bgApply: (params) => ipcRenderer.invoke('bg:apply', params),
+  bgApplyWithRefine: (params) => ipcRenderer.invoke('bg:applyWithRefine', params),
 });

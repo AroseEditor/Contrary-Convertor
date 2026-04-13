@@ -315,6 +315,145 @@
 
   </main>
 
+  <!-- Mask Editor Overlay for Background Removal -->
+  <div class="mask-editor-overlay" id="mask-editor-overlay">
+    <div class="mask-editor-panel">
+
+      <!-- Header -->
+      <div class="mask-editor-header">
+        <span class="mask-editor-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          Background Remover
+        </span>
+        <div class="mask-header-actions">
+          <button class="mask-header-btn" id="mask-select-all-btn" title="Select entire foreground (AI Auto)">Select Subject</button>
+          <button class="mask-header-btn" id="mask-invert-btn" title="Invert selection">Invert</button>
+          <button class="mask-header-btn mask-header-btn--danger" id="mask-clear-btn" title="Clear all">Clear</button>
+          <button class="settings-close-btn" id="mask-editor-close" aria-label="Close">
+            <svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading spinner -->
+      <div class="mask-editor-loading" id="mask-loading">
+        <div class="mask-spinner"></div>
+        <span id="mask-loading-text">Detecting subject...</span>
+      </div>
+
+      <!-- Main workspace -->
+      <div class="mask-workspace" id="mask-workspace">
+
+        <!-- Left sidebar: tools -->
+        <div class="mask-sidebar" id="mask-tools">
+
+          <div class="mask-tool-section">
+            <div class="mask-tool-label">Selection</div>
+            <button class="mask-tool-btn active" id="mask-brush-btn" title="Paint to keep (B)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+              <span>Keep</span>
+            </button>
+            <button class="mask-tool-btn" id="mask-eraser-btn" title="Erase selection (E)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16l9.5-9.5 7 7L20 20z"/><path d="M6.5 17.5l5-5"/></svg>
+              <span>Erase</span>
+            </button>
+            <button class="mask-tool-btn" id="mask-auto-btn" title="Click object to select it (A)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+              <span>Object</span>
+            </button>
+          </div>
+
+          <div class="mask-tool-section">
+            <div class="mask-tool-label">History</div>
+            <button class="mask-tool-btn mask-tool-sm" id="mask-undo-btn" title="Undo (Ctrl+Z)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+              <span>Undo</span>
+            </button>
+            <button class="mask-tool-btn mask-tool-sm" id="mask-redo-btn" title="Redo (Ctrl+Y)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+              <span>Redo</span>
+            </button>
+          </div>
+
+          <div class="mask-tool-section">
+            <div class="mask-tool-label">Preview</div>
+            <button class="mask-tool-btn mask-tool-sm active" id="mask-preview-overlay" title="Overlay (tint on kept area)">Overlay</button>
+            <button class="mask-tool-btn mask-tool-sm" id="mask-preview-checker" title="Checkerboard transparency">Check</button>
+            <button class="mask-tool-btn mask-tool-sm" id="mask-preview-black" title="Black background">Black</button>
+            <button class="mask-tool-btn mask-tool-sm" id="mask-preview-white" title="White background">White</button>
+          </div>
+
+          <div class="mask-slider-group">
+            <label>Brush Size <span id="mask-brush-size-val">25</span></label>
+            <input type="range" id="mask-brush-size" min="2" max="120" value="25" class="settings-range"/>
+          </div>
+          <div class="mask-slider-group">
+            <label>Opacity <span id="mask-stroke-opacity-val">45%</span></label>
+            <input type="range" id="mask-stroke-opacity" min="10" max="100" value="45" class="settings-range"/>
+          </div>
+          <div class="mask-slider-group">
+            <label>Edge Snap <span id="mask-tolerance-val">32</span></label>
+            <input type="range" id="mask-tolerance" min="0" max="120" value="32" class="settings-range"/>
+          </div>
+          <div class="mask-checkbox-group">
+            <label><input type="checkbox" id="mask-auto-grow"/> Smart Expand</label>
+          </div>
+
+          <div class="mask-tool-section">
+            <div class="mask-tool-label">Edge Refinement</div>
+            <div class="mask-slider-group">
+              <label>Feather <span id="mask-feather-val">0</span></label>
+              <input type="range" id="mask-feather" min="0" max="20" value="0" class="settings-range"/>
+            </div>
+            <div class="mask-slider-group">
+              <label>Smooth <span id="mask-smooth-val">0</span></label>
+              <input type="range" id="mask-smooth" min="0" max="10" value="0" class="settings-range"/>
+            </div>
+            <div class="mask-slider-group">
+              <label>Shift Edge <span id="mask-shift-edge-val">0</span></label>
+              <input type="range" id="mask-shift-edge" min="-10" max="10" value="0" class="settings-range"/>
+            </div>
+          </div>
+
+          <div class="mask-slider-group">
+            <label>AI Quality</label>
+            <select id="mask-model" class="mask-select">
+              <option value="fast">Fast</option>
+              <option value="medium" selected>Balanced</option>
+              <option value="quality">Quality</option>
+            </select>
+          </div>
+
+        </div>
+
+        <!-- Canvas -->
+        <div class="mask-canvas-container" id="mask-canvas-container">
+          <canvas id="mask-canvas"></canvas>
+          <div class="mask-canvas-hint" id="mask-canvas-hint">
+            <div class="mask-hint-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+            </div>
+            <div>Click <strong>Select Subject</strong> for instant AI selection<br/>or <strong>paint</strong> over what you want to keep</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Footer actions -->
+      <div class="mask-editor-footer">
+        <div class="mask-footer-info" id="mask-footer-info">Paint or click to select subject</div>
+        <div class="mask-footer-actions">
+          <button class="mask-btn-secondary" id="mask-cancel-btn">Cancel</button>
+          <button class="mask-btn-primary" id="mask-apply-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            Export PNG
+          </button>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

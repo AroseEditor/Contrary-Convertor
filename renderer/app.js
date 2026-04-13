@@ -1,6 +1,6 @@
 'use strict';
 
-// ─── State ────────────────────────────────────────────────────────────────────
+// --------------------------- State ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const state = {
   currentFile: null,
   selectedFormat: null,
@@ -12,7 +12,7 @@ const state = {
   history: [],
 };
 
-// ─── DOM ──────────────────────────────────────────────────────────────────────
+// --------------------------- DOM ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const $ = id => document.getElementById(id);
 const dropzone        = $('dropzone');
 const fileInfoSection = $('file-info-section');
@@ -78,18 +78,18 @@ const dlCancelBtn     = $('dl-cancel-btn');
 const ytdlpQuality    = $('ytdlp-quality');
 const downloadSource  = $('download-source');
 
-// ─── Window controls ──────────────────────────────────────────────────────────
+// --------------------------- Window controls ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 $('btn-minimize').addEventListener('click', () => window.electronAPI.minimize());
 $('btn-maximize').addEventListener('click', () => window.electronAPI.maximize());
 $('btn-close').addEventListener('click',    () => window.electronAPI.close());
 
-// ─── Clear history ────────────────────────────────────────────────────────────
+// --------------------------- Clear history ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 historyClearBtn.addEventListener('click', () => {
   state.history = [];
-  historyList.innerHTML = '<li class="history-empty">No conversions yet — drop a file to get started</li>';
+  historyList.innerHTML = '<li class="history-empty">No conversions yet ... drop a file to get started</li>';
 });
 
-// ─── Settings panel ───────────────────────────────────────────────────────────
+// --------------------------- Settings panel ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 settingsBtn.addEventListener('click', () => {
   settingsOverlay.classList.add('open');
 });
@@ -116,7 +116,7 @@ ytdlpQuality.addEventListener('change', () => {
   state.ytdlpQuality = ytdlpQuality.value;
 });
 
-// ─── Download mode toggle ─────────────────────────────────────────────────────
+// --------------------------- Download mode toggle ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 downloadHint.addEventListener('click', () => {
   state.downloadMode = true;
   dropzone.style.display = 'none';
@@ -140,7 +140,7 @@ downloadBack.addEventListener('click', () => {
   downloadUrl.value = '';
 });
 
-// ─── Download handler ─────────────────────────────────────────────────────────
+// --------------------------- Download handler ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 downloadGoBtn.addEventListener('click', startDownload);
 downloadUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') startDownload(); });
 
@@ -155,7 +155,7 @@ async function startDownload() {
   state.downloading = true;
   show(dlProgressSection);
   dlProgressBar.style.width = '0%';
-  dlProgressLabel.textContent = 'Starting download…';
+  dlProgressLabel.textContent = 'Starting download...';
   dlSpeed.textContent = '0 MB/s';
   dlProgressPct.textContent = '0%';
   dlDownloaded.textContent = '0 MB / ?';
@@ -164,7 +164,7 @@ async function startDownload() {
     const pct = Math.min(Math.max(percent || 0, 0), 100);
     dlProgressBar.style.width = pct + '%';
     dlProgressPct.textContent = Math.round(pct) + '%';
-    dlProgressLabel.textContent = message || 'Downloading…';
+    dlProgressLabel.textContent = message || 'Downloading...';
     if (speed !== undefined) dlSpeed.textContent = (speed / (1024 * 1024)).toFixed(1) + ' MB/s';
     if (downloaded !== undefined && total !== undefined) {
       dlDownloaded.textContent = fmtBytes(downloaded) + ' / ' + fmtBytes(total);
@@ -176,9 +176,9 @@ async function startDownload() {
   try {
     const result = await window.electronAPI.downloadUrl({ url, savePath, threads: state.threads, quality: state.ytdlpQuality });
     if (result.error) {
-      dlProgressLabel.textContent = '⚠ ' + result.error.slice(0, 80);
+      dlProgressLabel.textContent = '... ' + result.error.slice(0, 80);
       dlSpeed.textContent = 'Error';
-      addHistory({ status: 'error', error: result.error, inputName: url.slice(0, 50), outputName: '—' });
+      addHistory({ status: 'error', error: result.error, inputName: url.slice(0, 50), outputName: '...' });
     } else {
       dlProgressBar.style.width = '100%';
       dlProgressPct.textContent = '100%';
@@ -187,7 +187,7 @@ async function startDownload() {
       const outName = result.filePath.split(/[\\/]/).pop();
       addHistory({
         status: 'success',
-        inputName: url.length > 50 ? url.slice(0, 47) + '…' : url,
+        inputName: url.length > 50 ? url.slice(0, 47) + '...' : url,
         outputName: outName,
         outputPath: result.filePath,
         sizeBefore: 0,
@@ -196,7 +196,7 @@ async function startDownload() {
       setTimeout(() => hide(dlProgressSection), 3000);
     }
   } catch (err) {
-    dlProgressLabel.textContent = '⚠ ' + err.message;
+    dlProgressLabel.textContent = '... ' + err.message;
     dlSpeed.textContent = 'Error';
   }
 
@@ -212,7 +212,7 @@ dlCancelBtn.addEventListener('click', () => {
   window.electronAPI.removeDownloadListener();
 });
 
-// ─── Drag events ──────────────────────────────────────────────────────────────
+// --------------------------- Drag events ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
 dropzone.addEventListener('dragleave', (e) => { if (!dropzone.contains(e.relatedTarget)) dropzone.classList.remove('drag-over'); });
 dropzone.addEventListener('drop', (e) => {
@@ -227,7 +227,7 @@ dropzone.addEventListener('keydown', async (e) => { if (e.key === 'Enter' || e.k
 
 fileClearBtn.addEventListener('click', (e) => { e.stopPropagation(); resetUI(); });
 
-// ─── Load / detect file ───────────────────────────────────────────────────────
+// --------------------------- Load / detect file ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 async function loadFile(filePath) {
   resetUI(false);
   try {
@@ -241,19 +241,19 @@ async function loadFile(filePath) {
   } catch (err) { showError('Detection failed: ' + err.message); }
 }
 
-// ─── Render file info ─────────────────────────────────────────────────────────
+// --------------------------- Render file info ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 function renderFileInfo(info) {
   fileTypeBadge.textContent = info.ext.toUpperCase().slice(0, 5);
   fileNameEl.textContent = info.name;
   const sizeMB = (info.size / (1024 * 1024)).toFixed(1);
-  fileDetailsEl.textContent = `${info.mime} · ${sizeMB} MB`;
+  fileDetailsEl.textContent = `${info.mime} | ${sizeMB} MB`;
   dropzone.classList.add('file-loaded');
 
   // Source media info
   if (info.probe && (info.probe.video || info.probe.audio)) {
     sourceMeta.style.display = 'flex';
     if (info.probe.video) {
-      srcRes.textContent = `${info.probe.video.width}×${info.probe.video.height}`;
+      srcRes.textContent = `${info.probe.video.width}x${info.probe.video.height}`;
       srcFps.textContent = info.probe.video.fps ? `${info.probe.video.fps} fps` : '';
       srcBr.textContent = info.probe.bitrate ? `${info.probe.bitrate} kbps` : '';
     } else if (info.probe.audio) {
@@ -284,7 +284,7 @@ function applySourceDefaults(p) {
   }
 }
 
-// ─── Format descriptions for dropdown ─────────────────────────────────────────
+// --------------------------- Format descriptions for dropdown ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const FORMAT_DESC = {
   // Image
   jpg:  'JPEG image', png:  'Lossless image', webp: 'Web image', avif: 'AV1 image',
@@ -310,13 +310,14 @@ const FORMAT_DESC = {
   'extract-images': 'Extract images from PDF',
   'extract-fonts':  'Extract embedded fonts',
   'extract':        'Extract archive contents',
+  'remove-bg':      'AI background removal',
 };
 
-// ─── Dropdown ─────────────────────────────────────────────────────────────────
+// --------------------------- Dropdown ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 function populateDropdown(info) {
   formatOptions.innerHTML = '';
   state.selectedFormat = null;
-  formatToggleText.textContent = 'Select output format…';
+  formatToggleText.textContent = 'Select output format...';
   formatToggleText.classList.remove('has-value');
   updateConvertBtn();
 
@@ -337,6 +338,7 @@ function populateDropdown(info) {
     else if (['mp3','wav','ogg','flac','aac','opus'].includes(fmt)) group = 'Audio';
     else if (['jpg','png','webp','avif','tiff','bmp','ico'].includes(fmt)) group = 'Image';
     else if (['txt','html','pdf'].includes(fmt)) group = 'Document';
+    else if (fmt === 'remove-bg') group = 'Image';
     if (!groups[group]) groups[group] = [];
     groups[group].push(fmt);
   });
@@ -417,16 +419,23 @@ function selectFormat(fmt, category, probe) {
   const opt = formatOptions.querySelector(`[data-format="${fmt}"]`);
   if (opt) opt.classList.add('selected');
 
-  formatToggleText.textContent = `${fmt.toUpperCase()} — ${FORMAT_DESC[fmt] || fmt}`;
+  formatToggleText.textContent = `${fmt.toUpperCase()} - ${FORMAT_DESC[fmt] || fmt}`;
   formatToggleText.classList.add('has-value');
   formatDropdown.classList.remove('open');
 
   state.selectedFormat = fmt;
+
+  // Special: open mask editor for background removal
+  if (fmt === 'remove-bg' && state.currentFile) {
+    openMaskEditor(state.currentFile.path);
+    return;
+  }
+
   updateOptionsPanel(category, fmt, probe);
   updateConvertBtn();
 }
 
-// ─── Options panel ────────────────────────────────────────────────────────────
+// --------------------------- Options panel ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 optionsToggle.addEventListener('click', () => {
   const open = optionsBody.classList.toggle('open');
   optionsToggle.setAttribute('aria-expanded', open);
@@ -472,7 +481,7 @@ function updateOptionsPanel(category, format, probe) {
   }
 }
 
-// Quality preset → slider
+// Quality preset --------- slider
 if (imgPresetSel) {
   imgPresetSel.addEventListener('change', () => {
     qualitySliderRow.style.display = imgPresetSel.value === 'custom' ? 'flex' : 'none';
@@ -482,13 +491,13 @@ if (qualitySlider) {
   qualitySlider.addEventListener('input', () => { qualityDisplay.textContent = qualitySlider.value; });
 }
 
-// ─── Convert ──────────────────────────────────────────────────────────────────
+// --------------------------- Convert ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 convertBtn.addEventListener('click', async () => {
   if (!state.currentFile || !state.selectedFormat || state.converting) return;
   state.converting = true;
   updateConvertBtn();
   show(progressSection);
-  setProgress(0, 'Starting…');
+  setProgress(0, 'Starting...');
 
   const options = gatherOptions();
 
@@ -505,7 +514,7 @@ convertBtn.addEventListener('click', async () => {
       showError(result.error);
       addHistory({ status: 'error', error: result.error,
         inputName: state.currentFile.name,
-        outputName: '—', sizeBefore: state.currentFile.size });
+        outputName: '...', sizeBefore: state.currentFile.size });
     } else {
       setProgress(100, 'Done!');
       flashSuccess();
@@ -551,7 +560,7 @@ function gatherOptions() {
   return o;
 }
 
-// ─── History ──────────────────────────────────────────────────────────────────
+// --------------------------- History ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 function addHistory(item) {
   state.history.unshift(item);
   if (state.history.length > 10) state.history.pop();
@@ -568,13 +577,13 @@ function addHistory(item) {
     : `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5"/></svg>`;
 
   const detail = item.status === 'success' && item.sizeAfter && item.sizeBefore
-    ? `${fmtBytes(item.sizeBefore)} → ${fmtBytes(item.sizeAfter)}`
+    ? `${fmtBytes(item.sizeBefore)} -> ${fmtBytes(item.sizeAfter)}`
     : (item.error ? item.error.slice(0, 60) : '');
 
   li.innerHTML = `
     <div class="history-status ${item.status}">${icon}</div>
     <div class="history-names">
-      <div class="history-conversion">${esc(item.inputName || '?')} → <strong>${esc(item.outputName || '?')}</strong></div>
+      <div class="history-conversion">${esc(item.inputName || '?')} -> <strong>${esc(item.outputName || '?')}</strong></div>
       <div class="history-meta">${detail}</div>
     </div>
     ${item.status === 'success' && item.outputPath ? `
@@ -595,7 +604,7 @@ function addHistory(item) {
   while (historyList.children.length > 10) historyList.removeChild(historyList.lastChild);
 }
 
-// ─── UI helpers ───────────────────────────────────────────────────────────────
+// --------------------------- UI helpers ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 function show(el) { el.classList.add('visible'); }
 function hide(el) { el.classList.remove('visible'); }
 
@@ -610,17 +619,17 @@ function resetUI(clearFile = true) {
   hide(fileInfoSection); hide(formatSection); hide(optionsSection); hide(progressSection);
   optionsBody.classList.remove('open');
   formatOptions.innerHTML = '';
-  formatToggleText.textContent = 'Select output format…';
+  formatToggleText.textContent = 'Select output format...';
   formatToggleText.classList.remove('has-value');
   formatDropdown.classList.remove('open');
-  setProgress(0, 'Converting…');
+  setProgress(0, 'Converting...');
   updateConvertBtn();
   window.electronAPI.removeProgressListener();
 }
 
 function showError(msg) {
   console.error('[CC]', msg);
-  progressLabel.textContent = '⚠ ' + msg.slice(0, 80);
+  progressLabel.textContent = '... ' + msg.slice(0, 80);
   progressPct.textContent = 'Error';
   show(progressSection);
   setTimeout(() => hide(progressSection), 5000);
@@ -629,7 +638,7 @@ function showError(msg) {
 function setProgress(pct, msg) {
   const c = Math.min(Math.max(pct, 0), 100);
   progressBar.style.width = c + '%';
-  progressLabel.textContent = msg || 'Converting…';
+  progressLabel.textContent = msg || 'Converting...';
   progressPct.textContent = Math.round(c) + '%';
 }
 
@@ -696,3 +705,882 @@ function detectSourceHtml(url) {
 
   return html;
 }
+
+
+// ---------------------------------------------------------
+//  MASK EDITOR - remove.bg / Photoshop-quality BG removal
+// ---------------------------------------------------------
+
+// -- DOM refs --
+const maskOverlay     = $('mask-editor-overlay');
+const maskCanvas      = $('mask-canvas');
+const maskCtx         = maskCanvas.getContext('2d');
+const maskLoading     = $('mask-loading');
+const maskLoadTxt     = $('mask-loading-text');
+const maskBox         = $('mask-canvas-container');
+const maskWorkspace   = $('mask-workspace');
+const maskToolbar     = $('mask-tools');
+const maskHint        = $('mask-canvas-hint');
+const maskFooterInfo  = $('mask-footer-info');
+
+const btnBrush        = $('mask-brush-btn');
+const btnEraser       = $('mask-eraser-btn');
+const btnAuto         = $('mask-auto-btn');
+const btnUndo         = $('mask-undo-btn');
+const btnRedo         = $('mask-redo-btn');
+const btnSelectAll    = $('mask-select-all-btn');
+const btnInvert       = $('mask-invert-btn');
+const btnClear        = $('mask-clear-btn');
+const btnApply        = $('mask-apply-btn');
+const btnCancel       = $('mask-cancel-btn');
+const btnClose        = $('mask-editor-close');
+
+const btnPrevOverlay  = $('mask-preview-overlay');
+const btnPrevChecker  = $('mask-preview-checker');
+const btnPrevBlack    = $('mask-preview-black');
+const btnPrevWhite    = $('mask-preview-white');
+
+const sliderSize      = $('mask-brush-size');
+const labelSize       = $('mask-brush-size-val');
+const sliderOpacity   = $('mask-stroke-opacity');
+const labelOpacity    = $('mask-stroke-opacity-val');
+const sliderTolerance = $('mask-tolerance');
+const labelTolerance  = $('mask-tolerance-val');
+const chkAutoGrow     = $('mask-auto-grow');
+const sliderFeather   = $('mask-feather');
+const labelFeather    = $('mask-feather-val');
+const sliderSmooth    = $('mask-smooth');
+const labelSmooth     = $('mask-smooth-val');
+const sliderShiftEdge = $('mask-shift-edge');
+const labelShiftEdge  = $('mask-shift-edge-val');
+const selectModel     = $('mask-model');
+
+// -- Offscreen mask canvas (true size of displayed image) --
+const mOff    = document.createElement('canvas');
+const mOffCtx = mOff.getContext('2d');
+
+// -- Undo/Redo --
+const undoStack  = [];
+const redoStack  = [];
+const MAX_HISTORY = 30;
+
+// -- Persistent settings --
+const savedMask = JSON.parse(localStorage.getItem('maskSettings') || '{}');
+
+// -- Main state object --
+const R = {
+  path: null, img: null,
+  tool: 'brush',
+  down: false, lx: 0, ly: 0,
+  zoom: 1, ox: 0, oy: 0,
+  panning: false, px: 0, py: 0,
+  iw: 0, ih: 0,
+  mx: -1, my: -1,
+  size:        savedMask.size        || 25,
+  alpha:       savedMask.alpha       || 0.45,
+  tolerance:   savedMask.tolerance   || 32,
+  autoGrow:    savedMask.autoGrow    || false,
+  previewMode: savedMask.previewMode || 'overlay',
+  feather:     savedMask.feather     || 0,
+  smooth:      savedMask.smooth      || 0,
+  shiftEdge:   savedMask.shiftEdge   || 0,
+  aiModel:     savedMask.aiModel     || 'medium',
+  aiMask:      null,
+  dirty:       false,
+  srcPixels:   null,
+  hasContent:  false,
+};
+
+// -- Apply saved settings to UI --
+sliderSize.value      = R.size;       labelSize.textContent      = R.size;
+sliderOpacity.value   = Math.round(R.alpha * 100);
+labelOpacity.textContent = Math.round(R.alpha * 100) + '%';
+sliderTolerance.value = R.tolerance;  labelTolerance.textContent = R.tolerance;
+chkAutoGrow.checked   = R.autoGrow;
+sliderFeather.value   = R.feather;    labelFeather.textContent   = R.feather;
+sliderSmooth.value    = R.smooth;     labelSmooth.textContent    = R.smooth;
+sliderShiftEdge.value = R.shiftEdge;  labelShiftEdge.textContent = R.shiftEdge;
+selectModel.value     = R.aiModel;
+setPreviewMode(R.previewMode);
+
+function saveMaskSettings() {
+  localStorage.setItem('maskSettings', JSON.stringify({
+    size: R.size, alpha: R.alpha, tolerance: R.tolerance, autoGrow: R.autoGrow,
+    previewMode: R.previewMode, feather: R.feather, smooth: R.smooth,
+    shiftEdge: R.shiftEdge, aiModel: R.aiModel,
+  }));
+}
+
+// -- Preview mode --
+function setPreviewMode(mode) {
+  R.previewMode = mode;
+  btnPrevOverlay.classList.toggle('active', mode === 'overlay');
+  btnPrevChecker.classList.toggle('active', mode === 'checker');
+  btnPrevBlack.classList.toggle('active',   mode === 'black');
+  btnPrevWhite.classList.toggle('active',   mode === 'white');
+  maskBox.classList.toggle('checker-bg',    mode === 'checker');
+  R.dirty = true;
+  saveMaskSettings();
+}
+btnPrevOverlay.addEventListener('click', () => setPreviewMode('overlay'));
+btnPrevChecker.addEventListener('click', () => setPreviewMode('checker'));
+btnPrevBlack.addEventListener('click',   () => setPreviewMode('black'));
+btnPrevWhite.addEventListener('click',   () => setPreviewMode('white'));
+
+// -- Tool selection --
+function setTool(tool) {
+  R.tool = tool;
+  btnBrush.classList.toggle('active',  tool === 'brush');
+  btnEraser.classList.toggle('active', tool === 'eraser');
+  btnAuto.classList.toggle('active',   tool === 'auto');
+  maskCanvas.style.cursor = tool === 'brush' || tool === 'eraser' ? 'none' : 'crosshair';
+  updateFooterInfo();
+}
+btnBrush.addEventListener('click',  () => setTool('brush'));
+btnEraser.addEventListener('click', () => setTool('eraser'));
+btnAuto.addEventListener('click',   () => setTool('auto'));
+
+// -- Open --
+function openMaskEditor(filePath) {
+  R.path     = filePath;
+  R.down     = false;
+  R.aiMask   = null;
+  R.zoom     = 1;
+  R.ox       = 0;
+  R.oy       = 0;
+  R.hasContent = false;
+  undoStack.length = 0;
+  redoStack.length = 0;
+
+  maskOverlay.classList.add('open');
+  maskLoading.classList.add('visible');
+  maskWorkspace.style.display = 'none';
+  maskHint.classList.remove('hidden');
+  maskLoadTxt.textContent = 'Loading image...';
+
+  window.electronAPI.bgLoadImage({ imagePath: filePath })
+    .then(res => {
+      if (res.error) { maskLoadTxt.textContent = 'Error: ' + res.error; return; }
+      const mime = res.mime || 'image/png';
+      const img  = new Image();
+      img.onload = () => { R.img = img; boot(); };
+      img.onerror = () => { maskLoadTxt.textContent = 'Cannot decode image'; };
+      img.src = 'data:' + mime + ';base64,' + res.base64;
+    })
+    .catch(e => { maskLoadTxt.textContent = 'IPC error: ' + e.message; });
+}
+
+// -- Boot canvas --
+function boot() {
+  maskLoading.classList.remove('visible');
+  maskWorkspace.style.display = 'flex';
+
+  function setupCanvas() {
+    const bw = maskBox.clientWidth;
+    const bh = maskBox.clientHeight;
+
+    if (bw < 50 || bh < 50) return false;
+
+    maskCanvas.width  = bw;
+    maskCanvas.height = bh;
+
+    const pad = 20;
+    const sc  = Math.min((bw - pad * 2) / R.img.naturalWidth, (bh - pad * 2) / R.img.naturalHeight);
+    R.iw   = Math.round(R.img.naturalWidth  * sc);
+    R.ih   = Math.round(R.img.naturalHeight * sc);
+    R.zoom = 1;
+    R.ox   = Math.round((bw - R.iw) / 2);
+    R.oy   = Math.round((bh - R.ih) / 2);
+
+    mOff.width  = R.iw;
+    mOff.height = R.ih;
+    mOffCtx.clearRect(0, 0, R.iw, R.ih);
+
+    const srcCvs = document.createElement('canvas');
+    srcCvs.width = R.iw; srcCvs.height = R.ih;
+    const srcCtx = srcCvs.getContext('2d');
+    srcCtx.drawImage(R.img, 0, 0, R.iw, R.ih);
+    R.srcPixels = srcCtx.getImageData(0, 0, R.iw, R.ih);
+
+    maskHint.classList.add('hidden');
+    R.dirty = true;
+    updateFooterInfo();
+    return true;
+  }
+
+  // Try at 300ms, retry at 600ms if container not ready
+  setTimeout(() => {
+    if (!setupCanvas()) {
+      setTimeout(() => {
+        if (!setupCanvas()) {
+          setFooterInfo('Error: canvas area too small');
+        }
+      }, 300);
+    }
+  }, 300);
+}
+
+// -- 60fps render loop --
+(function loop() {
+  if (R.dirty && R.img) draw();
+  requestAnimationFrame(loop);
+})();
+
+// -- Main draw --
+let _olCvs = null, _olCtx = null;
+let _bgCvs = null, _bgCtx = null;
+let _edCvs = null, _edCtx = null;
+
+function draw() {
+  try {
+    const ctx = maskCtx;
+    const cw  = maskCanvas.width;
+    const ch  = maskCanvas.height;
+
+    // Clear canvas - use a visible-enough background
+    if (R.previewMode === 'white') {
+      ctx.fillStyle = '#e8e8e8';
+    } else if (R.previewMode === 'black') {
+      ctx.fillStyle = '#111';
+    } else {
+      ctx.fillStyle = '#120008';
+    }
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Compute image position on canvas (no transforms, direct coords)
+    const ix = R.ox;
+    const iy = R.oy;
+    const iw = Math.round(R.iw * R.zoom);
+    const ih = Math.round(R.ih * R.zoom);
+
+    if (R.previewMode === 'overlay') {
+      // Draw original image directly
+      ctx.drawImage(R.img, ix, iy, iw, ih);
+
+      // Red overlay on selected pixels
+      if (R.hasContent) {
+        ctx.globalAlpha = R.alpha;
+        ctx.drawImage(buildOverlay(), ix, iy, iw, ih);
+        ctx.globalAlpha = 1;
+
+        // Darken unselected area
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(buildDarkOverlay(), ix, iy, iw, ih);
+        ctx.globalAlpha = 1;
+      }
+    } else {
+      // Checker/Black/White mode
+      ctx.drawImage(buildTransparencyPreview(), ix, iy, iw, ih);
+    }
+
+    // Edge outline
+    if (_edCvs) ctx.drawImage(_edCvs, ix, iy, iw, ih);
+
+    // Brush cursor
+    if (R.mx >= 0 && R.tool !== 'auto') {
+      const cr = (R.size / 2) * R.zoom;
+      const cx = ix + R.mx * R.zoom;
+      const cy = iy + R.my * R.zoom;
+      ctx.strokeStyle = R.tool === 'eraser' ? 'rgba(255,100,100,0.8)' : 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  } catch (err) {
+    console.error('[MASK] draw error:', err);
+  }
+
+  R.dirty = false;
+}
+
+// Purple overlay (selected pixels)
+function buildOverlay() {
+  if (!_olCvs || _olCvs.width !== R.iw || _olCvs.height !== R.ih) {
+    _olCvs = document.createElement('canvas');
+    _olCvs.width = R.iw; _olCvs.height = R.ih;
+    _olCtx = _olCvs.getContext('2d');
+  }
+  _olCtx.clearRect(0, 0, R.iw, R.ih);
+  _olCtx.fillStyle = 'rgba(204,0,0,1)';
+  _olCtx.fillRect(0, 0, R.iw, R.ih);
+  _olCtx.globalCompositeOperation = 'destination-in';
+  _olCtx.drawImage(mOff, 0, 0);
+  _olCtx.globalCompositeOperation = 'source-over';
+  return _olCvs;
+}
+
+// Dark vignette on UNselected area
+function buildDarkOverlay() {
+  const c = document.createElement('canvas');
+  c.width = R.iw; c.height = R.ih;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(0,0,0,1)';
+  x.fillRect(0, 0, R.iw, R.ih);
+  x.globalCompositeOperation = 'destination-out';
+  x.drawImage(mOff, 0, 0);
+  x.globalCompositeOperation = 'source-over';
+  return c;
+}
+
+// Transparent result preview
+function buildTransparencyPreview() {
+  if (!_bgCvs || _bgCvs.width !== R.iw || _bgCvs.height !== R.ih) {
+    _bgCvs = document.createElement('canvas');
+    _bgCvs.width = R.iw; _bgCvs.height = R.ih;
+    _bgCtx = _bgCvs.getContext('2d');
+  }
+  _bgCtx.clearRect(0, 0, R.iw, R.ih);
+
+  if (!R.hasContent) {
+    // Nothing selected yet: show full image
+    _bgCtx.drawImage(R.img, 0, 0, R.iw, R.ih);
+  } else {
+    _bgCtx.drawImage(R.img, 0, 0, R.iw, R.ih);
+    _bgCtx.globalCompositeOperation = 'destination-in';
+    _bgCtx.drawImage(mOff, 0, 0);
+    _bgCtx.globalCompositeOperation = 'source-over';
+  }
+  return _bgCvs;
+}
+
+// Edge outline
+function rebuildEdge() {
+  if (!R.iw || !R.ih) return;
+  if (!_edCvs || _edCvs.width !== R.iw || _edCvs.height !== R.ih) {
+    _edCvs = document.createElement('canvas');
+    _edCvs.width = R.iw; _edCvs.height = R.ih;
+    _edCtx = _edCvs.getContext('2d');
+  }
+  _edCtx.clearRect(0, 0, R.iw, R.ih);
+  const src = mOffCtx.getImageData(0, 0, R.iw, R.ih).data;
+  const dst = _edCtx.createImageData(R.iw, R.ih);
+  const d   = dst.data;
+  const w   = R.iw;
+
+  for (let y = 1; y < R.ih - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i  = (y * w + x) * 4;
+      const a  = src[i + 3];
+      const al = src[i - 4  + 3];
+      const ar = src[i + 4  + 3];
+      const au = src[i - w * 4 + 3];
+      const ad = src[i + w * 4 + 3];
+      if (a > 128 && (al < 128 || ar < 128 || au < 128 || ad < 128)) {
+        d[i] = 255; d[i+1] = 26; d[i+2] = 26; d[i+3] = 255;
+      }
+    }
+  }
+  _edCtx.putImageData(dst, 0, 0);
+  R.dirty = true;
+}
+
+// -- Coord transform --
+function toImg(e) {
+  const rect = maskCanvas.getBoundingClientRect();
+  return [
+    (e.clientX - rect.left - R.ox) / R.zoom,
+    (e.clientY - rect.top  - R.oy) / R.zoom,
+  ];
+}
+function inBounds(x, y) { return x >= 0 && y >= 0 && x < R.iw && y < R.ih; }
+
+// -- Paint: color-snapping brush --
+function paint(x, y) {
+  if (!R.srcPixels) return;
+  const sz  = R.size / R.zoom;
+  const rad = sz / 2;
+  const w   = R.iw, h = R.ih;
+  const src = R.srcPixels.data;
+  const tol = R.tolerance;
+
+  const cx = Math.round(x), cy = Math.round(y);
+  if (!inBounds(cx, cy)) return;
+
+  const si = (cy * w + cx) * 4;
+  const sr = src[si], sg = src[si + 1], sb = src[si + 2];
+
+  const x0 = Math.max(0, Math.floor(x - rad));
+  const y0 = Math.max(0, Math.floor(y - rad));
+  const x1 = Math.min(w - 1, Math.ceil(x + rad));
+  const y1 = Math.min(h - 1, Math.ceil(y + rad));
+
+  const maskData = mOffCtx.getImageData(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+  const d  = maskData.data;
+  const mw = x1 - x0 + 1;
+  const r2 = rad * rad;
+
+  for (let py = y0; py <= y1; py++) {
+    for (let px = x0; px <= x1; px++) {
+      const dx = px - x, dy = py - y;
+      if (dx * dx + dy * dy > r2) continue;
+
+      const pi   = (py * w + px) * 4;
+      const dr   = src[pi] - sr, dg = src[pi + 1] - sg, db = src[pi + 2] - sb;
+      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+
+      if (tol === 0 || dist <= tol) {
+        const mi = ((py - y0) * mw + (px - x0)) * 4;
+        if (R.tool === 'brush') {
+          d[mi] = d[mi+1] = d[mi+2] = 255; d[mi+3] = 255;
+        } else {
+          d[mi] = d[mi+1] = d[mi+2] = d[mi+3] = 0;
+        }
+      }
+    }
+  }
+  mOffCtx.putImageData(maskData, x0, y0);
+}
+
+function line(x0, y0, x1, y1) {
+  const d = Math.hypot(x1 - x0, y1 - y0);
+  const n = Math.max(1, Math.ceil(d / Math.max(1, R.size / R.zoom / 3)));
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    paint(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+  }
+}
+
+// -- BFS region grow (Smart Expand) --
+function regionGrow(aiAlpha) {
+  if (!R.srcPixels) return;
+  const w   = R.iw, h = R.ih;
+  const src = R.srcPixels.data;
+  const tol = R.tolerance;
+  const maskData = mOffCtx.getImageData(0, 0, w, h);
+  const d   = maskData.data;
+
+  let sumR = 0, sumG = 0, sumB = 0, count = 0;
+  const visited = new Uint8Array(w * h);
+  const seeds   = [];
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      const i   = idx * 4;
+      if (d[i + 3] > 128) {
+        visited[idx] = 1;
+        sumR += src[i]; sumG += src[i + 1]; sumB += src[i + 2];
+        count++;
+        const l = x > 0     && d[((y) * w + (x - 1)) * 4 + 3] < 128;
+        const r = x < w - 1 && d[((y) * w + (x + 1)) * 4 + 3] < 128;
+        const u = y > 0     && d[((y - 1) * w + x) * 4 + 3] < 128;
+        const dn= y < h - 1 && d[((y + 1) * w + x) * 4 + 3] < 128;
+        if (l || r || u || dn) seeds.push(idx);
+      }
+    }
+  }
+  if (count === 0) return;
+
+  const avgR = sumR / count, avgG = sumG / count, avgB = sumB / count;
+  const queue = seeds.slice();
+  let qi = 0;
+
+  while (qi < queue.length) {
+    const idx = queue[qi++];
+    const nx  = idx % w, ny = (idx - nx) / w;
+    const neighbors = [
+      nx > 0     ? idx - 1 : -1,
+      nx < w - 1 ? idx + 1 : -1,
+      ny > 0     ? idx - w : -1,
+      ny < h - 1 ? idx + w : -1,
+    ];
+    for (const ni of neighbors) {
+      if (ni < 0 || visited[ni]) continue;
+      if (aiAlpha && aiAlpha[ni * 4 + 3] < 30) continue;
+      visited[ni] = 1;
+      const pi = ni * 4;
+      const dr = src[pi] - avgR, dg = src[pi + 1] - avgG, db = src[pi + 2] - avgB;
+      if (Math.sqrt(dr*dr + dg*dg + db*db) <= tol) {
+        d[pi] = d[pi+1] = d[pi+2] = 255; d[pi+3] = 255;
+        queue.push(ni);
+      }
+    }
+  }
+  mOffCtx.putImageData(maskData, 0, 0);
+}
+
+// -- Object Select (click-to-select) --
+let clickSelectRunning = false;
+
+async function clickSelectObject(imgX, imgY) {
+  if (clickSelectRunning || !R.path) return;
+  clickSelectRunning = true;
+
+  setFooterInfo('Detecting object at click...');
+  maskLoadTxt.textContent = 'Analyzing region...';
+  maskLoading.classList.add('visible');
+
+  try {
+    if (!R.aiMask) {
+      const res = await window.electronAPI.bgDetectSubject({ imagePath: R.path, model: R.aiModel });
+      if (res.error) throw new Error(res.error);
+      const aiImg = new Image();
+      await new Promise((resolve, reject) => {
+        aiImg.onload = resolve; aiImg.onerror = reject;
+        aiImg.src = 'data:image/png;base64,' + res.maskBase64;
+      });
+      const tmp = document.createElement('canvas');
+      tmp.width = R.iw; tmp.height = R.ih;
+      const tCtx = tmp.getContext('2d');
+      tCtx.drawImage(aiImg, 0, 0, R.iw, R.ih);
+      R.aiMask = tCtx.getImageData(0, 0, R.iw, R.ih).data;
+    }
+
+    pushUndo();
+
+    const cx = Math.round(Math.max(0, Math.min(R.iw - 1, imgX)));
+    const cy = Math.round(Math.max(0, Math.min(R.ih - 1, imgY)));
+    const aiAlphaAtClick = R.aiMask[(cy * R.iw + cx) * 4 + 3];
+
+    if (aiAlphaAtClick > 30) {
+      const maskData = mOffCtx.getImageData(0, 0, R.iw, R.ih);
+      const d = maskData.data;
+      for (let i = 0; i < R.aiMask.length; i += 4) {
+        if (R.aiMask[i + 3] > 30) {
+          d[i] = d[i+1] = d[i+2] = 255; d[i+3] = 255;
+        }
+      }
+      mOffCtx.putImageData(maskData, 0, 0);
+    } else {
+      const maskData = mOffCtx.getImageData(0, 0, R.iw, R.ih);
+      const d = maskData.data;
+      const src = R.srcPixels.data;
+      const w = R.iw, h = R.ih;
+      const si = (cy * w + cx) * 4;
+      const seedR = src[si], seedG = src[si+1], seedB = src[si+2];
+      const tol = Math.max(R.tolerance, 40);
+      const visited = new Uint8Array(w * h);
+      const queue = [cy * w + cx];
+      visited[cy * w + cx] = 1;
+      let qi = 0;
+      while (qi < queue.length) {
+        const idx = queue[qi++];
+        const nx = idx % w, ny = (idx - nx) / w;
+        d[idx*4] = d[idx*4+1] = d[idx*4+2] = 255; d[idx*4+3] = 255;
+        const neighbors = [nx>0?idx-1:-1, nx<w-1?idx+1:-1, ny>0?idx-w:-1, ny<h-1?idx+w:-1];
+        for (const ni of neighbors) {
+          if (ni < 0 || visited[ni]) continue;
+          visited[ni] = 1;
+          const pi = ni * 4;
+          const dr = src[pi]-seedR, dg = src[pi+1]-seedG, db = src[pi+2]-seedB;
+          if (Math.sqrt(dr*dr+dg*dg+db*db) <= tol) queue.push(ni);
+        }
+      }
+      mOffCtx.putImageData(maskData, 0, 0);
+    }
+
+    R.hasContent = true;
+    maskHint.classList.add('hidden');
+    rebuildEdge();
+    R.dirty = true;
+    setFooterInfo('Object selected. Paint to refine.');
+  } catch (err) {
+    setFooterInfo('Object select failed: ' + err.message);
+  } finally {
+    maskLoading.classList.remove('visible');
+    clickSelectRunning = false;
+  }
+}
+
+// -- AI Auto-detect (full image) --
+let autoDetectRunning = false;
+
+async function runAutoDetect() {
+  if (autoDetectRunning || !R.path) return;
+  autoDetectRunning = true;
+
+  maskLoadTxt.textContent = 'Running AI subject detection...';
+  maskLoading.classList.add('visible');
+  setFooterInfo('AI analyzing image...');
+
+  try {
+    const res = await window.electronAPI.bgDetectSubject({ imagePath: R.path, model: R.aiModel });
+    if (res.error) throw new Error(res.error);
+
+    const aiImg = new Image();
+    await new Promise((resolve, reject) => {
+      aiImg.onload = resolve; aiImg.onerror = reject;
+      aiImg.src = 'data:image/png;base64,' + res.maskBase64;
+    });
+
+    const tmp = document.createElement('canvas');
+    tmp.width = R.iw; tmp.height = R.ih;
+    const tCtx = tmp.getContext('2d');
+    tCtx.drawImage(aiImg, 0, 0, R.iw, R.ih);
+    const aiData = tCtx.getImageData(0, 0, R.iw, R.ih).data;
+    R.aiMask = aiData;
+
+    pushUndo();
+    const maskData = mOffCtx.getImageData(0, 0, R.iw, R.ih);
+    const d = maskData.data;
+    for (let i = 0; i < aiData.length; i += 4) {
+      if (aiData[i + 3] > 30) {
+        d[i] = d[i+1] = d[i+2] = 255; d[i+3] = 255;
+      }
+    }
+    mOffCtx.putImageData(maskData, 0, 0);
+
+    R.hasContent = true;
+    maskHint.classList.add('hidden');
+    rebuildEdge();
+    R.dirty = true;
+    setFooterInfo('Subject detected. Paint to refine edges.');
+  } catch (err) {
+    setFooterInfo('AI detection failed: ' + err.message);
+  } finally {
+    maskLoading.classList.remove('visible');
+    autoDetectRunning = false;
+  }
+}
+
+// -- Header button actions --
+btnSelectAll.addEventListener('click', runAutoDetect);
+
+btnInvert.addEventListener('click', () => {
+  if (!R.iw) return;
+  pushUndo();
+  const maskData = mOffCtx.getImageData(0, 0, R.iw, R.ih);
+  const d = maskData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const wasSelected = d[i+3] > 128;
+    d[i] = d[i+1] = d[i+2] = 255;
+    d[i+3] = wasSelected ? 0 : 255;
+  }
+  mOffCtx.putImageData(maskData, 0, 0);
+  rebuildEdge();
+  R.dirty = true;
+  setFooterInfo('Selection inverted.');
+});
+
+btnClear.addEventListener('click', () => {
+  if (!R.iw) return;
+  pushUndo();
+  mOffCtx.clearRect(0, 0, R.iw, R.ih);
+  _edCvs = null;
+  R.hasContent = false;
+  R.dirty = true;
+  maskHint.classList.remove('hidden');
+  setFooterInfo('Selection cleared.');
+});
+
+// -- Mouse events --
+maskCanvas.addEventListener('mousedown', e => {
+  if (!R.img) return;
+
+  if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    R.panning = true;
+    R.px = e.clientX - R.ox;
+    R.py = e.clientY - R.oy;
+    maskCanvas.style.cursor = 'grab';
+    return;
+  }
+
+  const [x, y] = toImg(e);
+
+  if (R.tool === 'auto') {
+    clickSelectObject(x, y);
+    return;
+  }
+
+  pushUndo();
+  R.down = true;
+  R.lx = x; R.ly = y;
+  paint(x, y);
+  R.hasContent = true;
+  maskHint.classList.add('hidden');
+  R.dirty = true;
+});
+
+maskCanvas.addEventListener('mousemove', e => {
+  const [imgX, imgY] = toImg(e);
+  R.mx = imgX; R.my = imgY;
+
+  if (R.panning) {
+    R.ox = e.clientX - R.px;
+    R.oy = e.clientY - R.py;
+    R.dirty = true;
+    return;
+  }
+  if (R.down) {
+    line(R.lx, R.ly, imgX, imgY);
+    R.lx = imgX; R.ly = imgY;
+  }
+  R.dirty = true;
+});
+
+maskCanvas.addEventListener('mouseup', async () => {
+  if (R.down) {
+    if (R.autoGrow && R.tool === 'brush') {
+      if (!R.aiMask) {
+        maskLoadTxt.textContent = 'Initializing smart expand...';
+        maskLoading.classList.add('visible');
+        try {
+          const res = await window.electronAPI.bgDetectSubject({ imagePath: R.path, model: R.aiModel });
+          if (!res.error) {
+            const aiImg = new Image();
+            await new Promise((resolve, reject) => { aiImg.onload = resolve; aiImg.onerror = reject; aiImg.src = 'data:image/png;base64,' + res.maskBase64; });
+            const tmp = document.createElement('canvas');
+            tmp.width = R.iw; tmp.height = R.ih;
+            const tCtx = tmp.getContext('2d');
+            tCtx.drawImage(aiImg, 0, 0, R.iw, R.ih);
+            R.aiMask = tCtx.getImageData(0, 0, R.iw, R.ih).data;
+          }
+        } catch (_) {}
+        maskLoading.classList.remove('visible');
+      }
+      regionGrow(R.aiMask);
+    }
+    rebuildEdge();
+  }
+  R.down = false; R.panning = false;
+  maskCanvas.style.cursor = R.tool === 'auto' ? 'crosshair' : 'none';
+});
+
+maskCanvas.addEventListener('mouseleave', () => {
+  if (R.down) rebuildEdge();
+  R.down = false; R.panning = false;
+  R.mx = -1; R.my = -1;
+  R.dirty = true;
+  maskCanvas.style.cursor = 'crosshair';
+});
+
+maskCanvas.addEventListener('mouseenter', () => {
+  maskCanvas.style.cursor = R.tool === 'auto' ? 'crosshair' : 'none';
+});
+
+// -- Scroll zoom --
+maskCanvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = maskCanvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const z0 = R.zoom;
+  R.zoom *= e.deltaY > 0 ? 0.9 : 1.1;
+  R.zoom  = Math.max(0.1, Math.min(16, R.zoom));
+  R.ox    = mx - (mx - R.ox) * (R.zoom / z0);
+  R.oy    = my - (my - R.oy) * (R.zoom / z0);
+  R.dirty = true;
+}, { passive: false });
+
+// -- Sliders --
+sliderSize.addEventListener('input', () => {
+  R.size = +sliderSize.value; labelSize.textContent = R.size; saveMaskSettings();
+});
+sliderOpacity.addEventListener('input', () => {
+  R.alpha = +sliderOpacity.value / 100;
+  labelOpacity.textContent = sliderOpacity.value + '%';
+  R.dirty = true; saveMaskSettings();
+});
+sliderTolerance.addEventListener('input', () => {
+  R.tolerance = +sliderTolerance.value; labelTolerance.textContent = R.tolerance; saveMaskSettings();
+});
+chkAutoGrow.addEventListener('change', () => { R.autoGrow = chkAutoGrow.checked; saveMaskSettings(); });
+sliderFeather.addEventListener('input', () => { R.feather = +sliderFeather.value; labelFeather.textContent = R.feather; saveMaskSettings(); });
+sliderSmooth.addEventListener('input', () => { R.smooth = +sliderSmooth.value; labelSmooth.textContent = R.smooth; saveMaskSettings(); });
+sliderShiftEdge.addEventListener('input', () => { R.shiftEdge = +sliderShiftEdge.value; labelShiftEdge.textContent = R.shiftEdge; saveMaskSettings(); });
+selectModel.addEventListener('change', () => { R.aiModel = selectModel.value; R.aiMask = null; saveMaskSettings(); });
+
+// -- Keyboard shortcuts --
+document.addEventListener('keydown', e => {
+  if (!maskOverlay.classList.contains('open')) return;
+  if (e.ctrlKey && e.key === 'z') { e.preventDefault(); doUndo(); }
+  if (e.ctrlKey && e.key === 'y') { e.preventDefault(); doRedo(); }
+  if (!e.ctrlKey) {
+    if (e.key === 'b' || e.key === 'B') setTool('brush');
+    if (e.key === 'e' || e.key === 'E') setTool('eraser');
+    if (e.key === 'a' || e.key === 'A') setTool('auto');
+    if (e.key === 'Escape') closeMaskEditor();
+    if (e.key === '[') { R.size = Math.max(2, R.size - 5); sliderSize.value = R.size; labelSize.textContent = R.size; }
+    if (e.key === ']') { R.size = Math.min(120, R.size + 5); sliderSize.value = R.size; labelSize.textContent = R.size; }
+  }
+});
+
+// -- Undo / Redo --
+function pushUndo() {
+  if (!R.iw || !R.ih) return;
+  undoStack.push(mOffCtx.getImageData(0, 0, R.iw, R.ih));
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack.length = 0;
+}
+function doUndo() {
+  if (!undoStack.length) return;
+  redoStack.push(mOffCtx.getImageData(0, 0, R.iw, R.ih));
+  mOffCtx.putImageData(undoStack.pop(), 0, 0);
+  rebuildEdge(); R.dirty = true;
+}
+function doRedo() {
+  if (!redoStack.length) return;
+  undoStack.push(mOffCtx.getImageData(0, 0, R.iw, R.ih));
+  mOffCtx.putImageData(redoStack.pop(), 0, 0);
+  rebuildEdge(); R.dirty = true;
+}
+btnUndo.addEventListener('click', doUndo);
+btnRedo.addEventListener('click', doRedo);
+
+// -- Footer info helper --
+function setFooterInfo(msg) {
+  if (maskFooterInfo) maskFooterInfo.textContent = msg;
+}
+function updateFooterInfo() {
+  const hints = { brush: 'Paint to keep areas  |  [ ] resize brush  |  Alt+drag to pan', eraser: 'Erase to remove areas from selection', auto: 'Click any object to select it' };
+  setFooterInfo(hints[R.tool] || '');
+}
+
+// -- Close --
+function closeMaskEditor() {
+  maskOverlay.classList.remove('open');
+  maskLoading.classList.remove('visible');
+  R.img   = null;
+  R.down  = false;
+  R.aiMask = null;
+}
+btnClose.addEventListener('click', closeMaskEditor);
+btnCancel.addEventListener('click', closeMaskEditor);
+
+// -- Apply & Export --
+btnApply.addEventListener('click', async () => {
+  if (!R.path) return;
+
+  maskWorkspace.style.display = 'none';
+  maskLoading.classList.add('visible');
+  maskLoadTxt.textContent = 'Removing background...';
+
+  const maskDataUrl = mOff.toDataURL('image/png');
+
+  try {
+    const hasRefine = R.feather > 0 || R.smooth > 0 || R.shiftEdge !== 0;
+    let res;
+
+    if (hasRefine) {
+      res = await window.electronAPI.bgApplyWithRefine({
+        imagePath: R.path, maskDataUrl,
+        feather: R.feather, smooth: R.smooth, shiftEdge: R.shiftEdge,
+      });
+    } else {
+      res = await window.electronAPI.bgApply({ imagePath: R.path, maskDataUrl });
+    }
+
+    if (res.error) {
+      maskLoadTxt.textContent = 'Error: ' + res.error;
+      setTimeout(() => { maskWorkspace.style.display = 'flex'; maskLoading.classList.remove('visible'); }, 3000);
+      return;
+    }
+
+    closeMaskEditor();
+    flashSuccess();
+    addHistory({
+      status:     'success',
+      inputName:  state.currentFile?.name || 'image',
+      outputName: res.filePath.split(/[\\/]/).pop(),
+      outputPath: res.filePath,
+      sizeBefore: state.currentFile?.size || 0,
+      sizeAfter:  res.fileSize,
+    });
+  } catch (err) {
+    maskLoadTxt.textContent = 'Failed: ' + err.message;
+    setTimeout(() => { maskWorkspace.style.display = 'flex'; maskLoading.classList.remove('visible'); }, 3000);
+  }
+});

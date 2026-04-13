@@ -63,6 +63,25 @@
 - Quality presets applied to yt-dlp: lossless, 1080p, 720p, 480p, 360p, audio-only
 - Output format: MP4 for video, MP3 for audio-only
 
+## 🖼️ AI Background Removal
+- Drop any image → select **"REMOVE-BG — AI background removal"** from the format dropdown
+- **Auto-detects** subjects using on-device AI (ONNX/WASM via @imgly/background-removal-node)
+- **Paint/Erase mask editor** with canvas overlay:
+  - 🖌️ **Brush** — paint over areas to keep
+  - 🧹 **Eraser** — erase areas from mask
+  - Adjustable **brush size** slider (5–80px)
+  - Crosshair cursor when painting on canvas
+- **Apply & Save** button — loading animation while processing
+- Saves as `originalname_removedbg.png` (transparent PNG)
+- AI model downloads ~50MB on first use (cached after)
+
+## 🔧 Auto-Install Dependencies (No Manual Setup)
+- **No more "Install Node.js"** error — app auto-downloads **portable Node.js** (~30MB) on first launch
+- Downloads from nodejs.org to `%APPDATA%/contra-conv/portable-node/`
+- Uses that portable npm to install all conversion libraries
+- Cached — only downloads once, reused on all future launches
+- `isFirstLaunch.txt` flag tracks installation state (True = installed, False/missing = install)
+
 ## 🏗️ Build & Packaging
 - GitHub Actions workflow for macOS builds (DMG)
 - Linux AppImage build support

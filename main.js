@@ -50,6 +50,8 @@ function getFirstLaunchPath() {
 }
 
 function isDepsInstalled() {
+  // In dev mode, deps are managed by the developer via npm install
+  if (!app.isPackaged) return true;
   const flagPath = getFirstLaunchPath();
   if (!fs.existsSync(flagPath)) return false;
   try {
@@ -92,65 +94,139 @@ function createSetupWindow() {
   });
 }
 
-// ─── Find npm on the system ───────────────────────────────────────────────────
-// Checks PATH first, then common Windows and macOS install locations.
+// ─── Portable Node.js auto-download ──────────────────────────────────────────
+const NODE_VERSION = 'v20.18.3';
+
+function getPortableNodeDir() {
+  return path.join(app.getPath('userData'), 'portable-node');
+}
+
+function getPortableNpm() {
+  const nodeDir = getPortableNodeDir();
+  if (!fs.existsSync(nodeDir)) return null;
+  const entries = fs.readdirSync(nodeDir);
+  const nodeFolder = entries.find(e => e.startsWith('node-'));
+  if (!nodeFolder) return null;
+  if (process.platform === 'win32') {
+    return path.join(nodeDir, nodeFolder, 'npm.cmd');
+  }
+  return path.join(nodeDir, nodeFolder, 'bin', 'npm');
+}
+
 function findNpm() {
+  // 1. Portable Node.js
+  const portableNpm = getPortableNpm();
+  if (portableNpm && fs.existsSync(portableNpm)) return portableNpm;
+  // 2. System npm
   if (process.platform === 'win32') {
     const candidates = [
-      // Explicit known locations (no PATH dependency)
-      path.join(process.env.ProgramFiles  || 'C:\\Program Files',        'nodejs', 'npm.cmd'),
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', 'npm.cmd'),
       path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'nodejs', 'npm.cmd'),
-      path.join(process.env.APPDATA       || '',  'npm', 'npm.cmd'),
-      path.join(process.env.LOCALAPPDATA  || '',  'Programs', 'nodejs', 'npm.cmd'),
+      path.join(process.env.APPDATA || '', 'npm', 'npm.cmd'),
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'nodejs', 'npm.cmd'),
     ];
     for (const c of candidates) { if (fs.existsSync(c)) return c; }
-    // Fall back to PATH
     try {
-      const found = require('child_process')
-        .execSync('where npm.cmd', { timeout: 3000, stdio: ['ignore','pipe','ignore'] })
-        .toString().split('\n')[0].trim();
+      const found = require('child_process').execSync('where npm.cmd', { timeout: 3000, stdio: ['ignore','pipe','ignore'] }).toString().split('\n')[0].trim();
       if (found && fs.existsSync(found)) return found;
-    } catch (_) {}
-    return null;
+    } catch {}
   } else {
-    // macOS / Linux — check PATH via which
     try {
-      const found = require('child_process')
-        .execSync('which npm', { timeout: 3000, stdio: ['ignore','pipe','ignore'] })
-        .toString().trim();
+      const found = require('child_process').execSync('which npm', { timeout: 3000, stdio: ['ignore','pipe','ignore'] }).toString().trim();
       if (found) return found;
-    } catch (_) {}
-    // Common macOS paths (nvm, homebrew)
-    for (const c of [
-      '/usr/local/bin/npm',
-      '/opt/homebrew/bin/npm',
-      path.join(process.env.HOME || '', '.nvm', 'versions', 'node', 'current', 'bin', 'npm'),
-    ]) { if (fs.existsSync(c)) return c; }
-    return null;
+    } catch {}
+    for (const c of ['/usr/local/bin/npm', '/opt/homebrew/bin/npm']) { if (fs.existsSync(c)) return c; }
   }
+  return null;
+}
+
+async function ensurePortableNode(sendProgress) {
+  if (findNpm()) return; // Already have npm
+
+  sendProgress('Downloading Node.js (first time only)...');
+  const nodeDir = getPortableNodeDir();
+  fs.mkdirSync(nodeDir, { recursive: true });
+
+  let archiveName;
+  if (process.platform === 'win32') {
+    archiveName = `node-${NODE_VERSION}-win-x64.zip`;
+  } else if (process.platform === 'darwin') {
+    archiveName = `node-${NODE_VERSION}-darwin-x64.tar.gz`;
+  } else {
+    archiveName = `node-${NODE_VERSION}-linux-x64.tar.xz`;
+  }
+  const archiveUrl = `https://nodejs.org/dist/${NODE_VERSION}/${archiveName}`;
+  const archivePath = path.join(nodeDir, archiveName);
+
+  // Download
+  await downloadFileWithProgress(archiveUrl, archivePath, (pct) => {
+    sendProgress(`Downloading Node.js: ${Math.round(pct)}%`);
+  });
+
+  // Extract
+  sendProgress('Extracting Node.js...');
+  if (process.platform === 'win32') {
+    await new Promise((resolve, reject) => {
+      const cmd = `powershell -NoProfile -Command "Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${nodeDir.replace(/'/g, "''")}' -Force"`;
+      const proc = spawn(cmd, [], { shell: true, windowsHide: true });
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error('Expand-Archive failed')));
+      proc.on('error', reject);
+    });
+  } else {
+    await new Promise((resolve, reject) => {
+      const proc = spawn('tar', ['xf', archivePath, '-C', nodeDir], { shell: true });
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error('tar failed')));
+      proc.on('error', reject);
+    });
+  }
+
+  try { fs.unlinkSync(archivePath); } catch {}
+  sendProgress('Node.js ready!');
+}
+
+function downloadFileWithProgress(url, dest, onProgress) {
+  const https = require('https');
+  const http = require('http');
+  return new Promise((resolve, reject) => {
+    const doRequest = (u) => {
+      const mod = u.startsWith('https') ? https : http;
+      mod.get(u, { headers: { 'User-Agent': 'ContraryConvertor/1.0' } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { doRequest(res.headers.location); return; }
+        if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+        const total = parseInt(res.headers['content-length'] || '0', 10);
+        let downloaded = 0;
+        const ws = fs.createWriteStream(dest);
+        res.on('data', (chunk) => { downloaded += chunk.length; if (total && onProgress) onProgress((downloaded / total) * 100); });
+        res.pipe(ws);
+        ws.on('finish', () => { ws.close(); resolve(); });
+        ws.on('error', reject);
+      }).on('error', reject);
+    };
+    doRequest(url);
+  });
 }
 
 // ─── Install dependencies into MODULES_DIR ────────────────────────────────────
 function installDependencies() {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    const sendProgress = (line) => {
+      if (setupWindow && !setupWindow.isDestroyed())
+        setupWindow.webContents.send('setup:progress', line);
+    };
+
+    // Step 1: Ensure we have npm
+    try { await ensurePortableNode(sendProgress); } catch (err) { /* try system npm */ }
+
     const npmPath = findNpm();
-
     if (!npmPath) {
-      // No npm/Node.js found — tell the user and open the download page
-      const msg = 'Node.js is not installed on this machine.\n\n' +
-        'Contrary Convertor needs Node.js to download its conversion libraries on first run.\n\n' +
-        'Opening nodejs.org in your browser — install Node.js, then restart this app.';
-
-      if (setupWindow && !setupWindow.isDestroyed()) {
-        setupWindow.webContents.send('setup:error', msg);
-      }
-      // Open download page after short delay so UI updates first
-      setTimeout(() => shell.openExternal('https://nodejs.org/en/download/'), 1500);
+      const msg = 'Could not download or find Node.js/npm.\nPlease check your internet connection and restart the app.';
+      if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send('setup:error', msg);
       reject(new Error(msg));
       return;
     }
 
-    // Write minimal package.json
+    // Step 2: Write package.json for cc-modules
+    sendProgress('Preparing dependencies...');
     const pkg = require('./package.json');
     fs.mkdirSync(MODULES_DIR, { recursive: true });
     fs.writeFileSync(
@@ -159,16 +235,11 @@ function installDependencies() {
       'utf-8'
     );
 
+    // Step 3: npm install
+    sendProgress('Installing conversion libraries...');
     const child = spawn(npmPath, ['install', '--production', '--legacy-peer-deps'], {
-      cwd: MODULES_DIR,
-      shell: true,
-      windowsHide: true,
+      cwd: MODULES_DIR, shell: true, windowsHide: true,
     });
-
-    const sendProgress = (line) => {
-      if (setupWindow && !setupWindow.isDestroyed())
-        setupWindow.webContents.send('setup:progress', line);
-    };
 
     child.stdout.on('data', (d) => sendProgress(d.toString()));
     child.stderr.on('data', (d) => sendProgress(d.toString()));
@@ -176,8 +247,7 @@ function installDependencies() {
     child.on('close', (code) => {
       if (code === 0) {
         markDepsInstalled();
-        if (setupWindow && !setupWindow.isDestroyed())
-          setupWindow.webContents.send('setup:complete');
+        if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send('setup:complete');
         resolve();
       } else {
         reject(new Error(`npm install exited with code ${code}. Check your internet connection and try again.`));
@@ -215,8 +285,10 @@ const installDepsMode = process.argv.includes('--install-deps');
 app.whenReady().then(async () => {
   if (app.isPackaged) {
     MODULES_DIR = path.join(app.getPath('userData'), 'cc-modules');
-    fs.mkdirSync(MODULES_DIR, { recursive: true });
+  } else {
+    MODULES_DIR = __dirname; // dev mode: use project root
   }
+  fs.mkdirSync(MODULES_DIR, { recursive: true });
 
   // ── NSIS install-deps mode ──────────────────────────────────────────────────
   // Called by the NSIS installer after file extraction.
@@ -544,6 +616,151 @@ function urlToFilename(url) {
 }
 
 
+// ─── Background Removal ──────────────────────────────────────────────────────
+ipcMain.handle('bg:loadImage', async (_event, { imagePath }) => {
+  try {
+    const ext = path.extname(imagePath).toLowerCase().replace('.', '');
+    const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', avif: 'image/avif', ico: 'image/x-icon' };
+    const mime = mimeMap[ext];
+
+    if (mime) {
+      // Browser can decode these natively — just read raw bytes
+      const buf = fs.readFileSync(imagePath);
+      return { base64: buf.toString('base64'), mime };
+    }
+
+    // Exotic format (HEIC, TIFF, etc.) — convert to PNG via sharp
+    const sharpMod = r('sharp');
+    const pngBuf = await sharpMod(imagePath).png().toBuffer();
+    return { base64: pngBuf.toString('base64'), mime: 'image/png' };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('bg:detectSubject', async (_event, { imagePath, model }) => {
+  try {
+    const sharpMod = r('sharp');
+    const pngBuf = await sharpMod(imagePath).png().toBuffer();
+    const blob = new Blob([pngBuf], { type: 'image/png' });
+
+    let bgRemoval;
+    try { bgRemoval = r('@imgly/background-removal-node'); } catch {
+      bgRemoval = await import('@imgly/background-removal-node');
+    }
+    const segFn = bgRemoval.segmentForeground || bgRemoval.default?.segmentForeground;
+    const rmFn = bgRemoval.removeBackground || bgRemoval.default?.removeBackground || bgRemoval.default;
+
+    const cfg = { model: model || 'medium' };
+    let resultBlob;
+    if (segFn) {
+      // segmentForeground returns just the mask (better for manual refinement)
+      resultBlob = await segFn(blob, cfg);
+    } else {
+      resultBlob = await rmFn(blob, cfg);
+    }
+    const arrBuf = await resultBlob.arrayBuffer();
+    const resultBuf = Buffer.from(arrBuf);
+    return { maskBase64: resultBuf.toString('base64') };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('bg:apply', async (_event, { imagePath, maskDataUrl }) => {
+  try {
+    const sharpMod = r('sharp');
+    const maskBase64 = maskDataUrl.replace(/^data:image\/\w+;base64,/, '');
+    const maskBuf = Buffer.from(maskBase64, 'base64');
+    const meta = await sharpMod(imagePath).metadata();
+    const w = meta.width, h = meta.height;
+
+    const alphaRaw = await sharpMod(maskBuf)
+      .resize(w, h, { fit: 'fill' })
+      .ensureAlpha()
+      .extractChannel(3)
+      .raw()
+      .toBuffer();
+
+    const origRaw = await sharpMod(imagePath).ensureAlpha().raw().toBuffer();
+    const output = Buffer.from(origRaw);
+    for (let i = 0; i < w * h; i++) {
+      output[i * 4 + 3] = alphaRaw[i];
+    }
+
+    const ext = path.extname(imagePath);
+    const base = path.basename(imagePath, ext);
+    const outPath = path.join(path.dirname(imagePath), `${base}_removedbg.png`);
+
+    await sharpMod(output, { raw: { width: w, height: h, channels: 4 } })
+      .png()
+      .toFile(outPath);
+
+    return { filePath: outPath, fileSize: fs.statSync(outPath).size };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('bg:applyWithRefine', async (_event, { imagePath, maskDataUrl, feather, smooth, shiftEdge }) => {
+  try {
+    const sharpMod = r('sharp');
+    const maskBase64 = maskDataUrl.replace(/^data:image\/\w+;base64,/, '');
+    const maskBuf = Buffer.from(maskBase64, 'base64');
+    const meta = await sharpMod(imagePath).metadata();
+    const w = meta.width, h = meta.height;
+
+    // Start with the mask alpha channel
+    let maskPipeline = sharpMod(maskBuf)
+      .resize(w, h, { fit: 'fill' })
+      .ensureAlpha()
+      .extractChannel(3);
+
+    // Feather: Gaussian blur on mask for soft edges
+    if (feather && feather > 0) {
+      const sigma = feather * (Math.max(w, h) / 1000);  // scale to image size
+      maskPipeline = sharpMod(await maskPipeline.toBuffer())
+        .blur(Math.max(0.3, sigma));
+    }
+
+    // Smooth: median filter to reduce jagged edges
+    if (smooth && smooth > 0) {
+      const medianSize = Math.max(3, Math.round(smooth) * 2 + 1);  // must be odd, 3+
+      maskPipeline = sharpMod(await maskPipeline.toBuffer())
+        .median(Math.min(medianSize, 11));
+    }
+
+    // Shift Edge: threshold adjustment (shift > 0 = expand, < 0 = contract)
+    if (shiftEdge && shiftEdge !== 0) {
+      // Lower threshold = expand selection, higher = contract
+      const threshold = Math.max(1, Math.min(254, 128 - shiftEdge * 10));
+      maskPipeline = sharpMod(await maskPipeline.toBuffer())
+        .threshold(threshold);
+    }
+
+    const alphaRaw = await maskPipeline.raw().toBuffer();
+
+    // Read original as raw RGBA
+    const origRaw = await sharpMod(imagePath).ensureAlpha().raw().toBuffer();
+    const output = Buffer.from(origRaw);
+    for (let i = 0; i < w * h; i++) {
+      output[i * 4 + 3] = alphaRaw[i];
+    }
+
+    const ext = path.extname(imagePath);
+    const base = path.basename(imagePath, ext);
+    const outPath = path.join(path.dirname(imagePath), `${base}_removedbg.png`);
+
+    await sharpMod(output, { raw: { width: w, height: h, channels: 4 } })
+      .png()
+      .toFile(outPath);
+
+    return { filePath: outPath, fileSize: fs.statSync(outPath).size };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 // ─── Category + format helpers ────────────────────────────────────────────────
 function detectCategory(ext) {
   const maps = {
@@ -582,7 +799,7 @@ function getMimeFromExt(ext) {
 
 function getOutputFormats(category, ext) {
   const fmt = {
-    image:        ['jpg','png','webp','avif','gif','tiff','bmp','ico'],
+    image:        ['jpg','png','webp','avif','gif','tiff','bmp','ico','remove-bg'],
     video:        ['mp4','webm','mov','avi','mkv','gif','mp3'],
     audio:        ['mp3','wav','ogg','flac','aac','opus'],
     document:     { pdf:['txt','html','extract-images','extract-fonts'], docx:['pdf','html','txt','extract-text'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text'] },
