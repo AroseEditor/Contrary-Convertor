@@ -27,7 +27,7 @@ Contrary Convertor is a free, open-source desktop app that converts files locall
 
 ### Run from source
 ```bash
-git clone https://github.com/yourusername/contrary-convertor.git
+git clone https://github.com/AroseEditor/contrary-convertor.git
 cd contrary-convertor
 npm install
 npm start
@@ -39,7 +39,7 @@ npm start
 npm run build
 ```
 
-Output goes to `dist/`. Supports Windows (NSIS installer).
+Output goes to `dist/`. Supports Windows (NSIS installer). You can also use the Bat to make setup.
 
 ## Tech Stack
 
