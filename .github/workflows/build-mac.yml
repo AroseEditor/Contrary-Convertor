@@ -1,6 +1,5 @@
-name: Build Mac DMG
+name: Build Mac & Linux
 
-# Runs when you manually trigger it from GitHub
 on:
   workflow_dispatch:
 
@@ -8,23 +7,27 @@ jobs:
   build-mac:
     runs-on: macos-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Build Mac DMG
-        run: npx electron-builder --mac dmg --publish never
-
-      - name: Upload DMG
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --legacy-peer-deps
+      - run: npx electron-builder --mac dmg --publish never
+      - uses: actions/upload-artifact@v4
         with:
           name: Contrary-Convertor-Mac
           path: dist/*.dmg
+          retention-days: 30
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --legacy-peer-deps
+      - run: npx electron-builder --linux AppImage --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Contrary-Convertor-Linux
+          path: dist/*.AppImage
           retention-days: 30
