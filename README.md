@@ -51,6 +51,18 @@ Output goes to `dist/`. Supports Windows (NSIS installer). You can also use the 
 - [file-type](https://github.com/sindresorhus/file-type) — magic byte detection
 - [puppeteer](https://pptr.dev) — HTML to PDF/PNG
 
+## 🖼️ AI Background Removal
+- Drop any image → select **"REMOVE-BG — AI background removal"** from the format dropdown
+- **Auto-detects** subjects using on-device AI (ONNX/WASM via @imgly/background-removal-node)
+- **Paint/Erase mask editor** with canvas overlay:
+  - 🖌️ **Brush** — paint over areas to keep
+  - 🧹 **Eraser** — erase areas from mask
+  - Adjustable **brush size** slider (5–80px)
+  - Crosshair cursor when painting on canvas
+- **Apply & Save** button — loading animation while processing
+- Saves as `originalname_removedbg.png` (transparent PNG)
+- AI model downloads ~50MB on first use (cached after)
+
 ## Contributing
 
 PRs welcome! Please open an issue first for major changes.
@@ -63,4 +75,6 @@ PRs welcome! Please open an issue first for major changes.
 
 ## License
 
-MIT © [Arose Editor](https://github.com/AroseEditor)
+MIT © [Arose Editor](https://github.com/AroseEditor)**
+If you liked my work you can support me by paying me on UPI ( dm me on discord ayush.ue5 )
+**
