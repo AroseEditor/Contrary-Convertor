@@ -63,4 +63,4 @@ PRs welcome! Please open an issue first for major changes.
 
 ## License
 
-MIT © [Your Name](https://github.com/yourusername)
+MIT © [Arose Editor](https://github.com/AroseEditor)
