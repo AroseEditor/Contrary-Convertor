@@ -1,19 +1,19 @@
-name: Build Mac DMG
+name: Build Linux AppImage
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-mac:
-    runs-on: macos-latest
+  build-linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm install --legacy-peer-deps
-      - run: npx electron-builder --mac dmg --publish never
+      - run: npx electron-builder --linux AppImage --publish never
       - uses: actions/upload-artifact@v4
         with:
-          name: Contrary-Convertor-Mac
-          path: dist/*.dmg
+          name: Contrary-Convertor-Linux
+          path: dist/*.AppImage
           retention-days: 30
