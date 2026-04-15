@@ -27,7 +27,7 @@ function createMainWindow() {
     width: 1000, height: 680,
     minWidth: 800, minHeight: 560,
     frame: false, transparent: false,
-    backgroundColor: '#0d0000',
+    backgroundColor: '#050005',
     titleBarStyle: 'hidden',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: {
@@ -225,6 +225,29 @@ ipcMain.on('win:maximize', () => {
   mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
 });
 ipcMain.on('win:close', () => mainWindow && mainWindow.close());
+
+// ─── Settings persistence ─────────────────────────────────────────────────────
+const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+
+function loadSettings() {
+  try {
+    if (fs.existsSync(settingsPath)) {
+      return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    }
+  } catch {}
+  return {};
+}
+
+function saveSettings(data) {
+  try {
+    const current = loadSettings();
+    const merged = { ...current, ...data };
+    fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2), 'utf-8');
+  } catch {}
+}
+
+ipcMain.handle('settings:load', () => loadSettings());
+ipcMain.on('settings:save', (_e, data) => saveSettings(data));
 
 // ─── File dialog ──────────────────────────────────────────────────────────────
 ipcMain.handle('dialog:openFile', async () => {
@@ -681,7 +704,7 @@ function getOutputFormats(category, ext) {
     image:        ['jpg','png','webp','avif','gif','tiff','bmp','ico','remove-bg'],
     video:        ['mp4','webm','mov','avi','mkv','gif','mp3'],
     audio:        ['mp3','wav','ogg','flac','aac','opus'],
-    document:     { pdf:['txt','html','extract-text','extract-images','extract-fonts'], docx:['pdf','html','txt','extract-text','extract-images'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text','extract-images'] },
+    document:     { pdf:['html','extract-text','extract-images','extract-fonts'], docx:['pdf','html','txt','extract-text','extract-images'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text','extract-images'] },
     data:         ['json','csv','xml','yaml','toml','env'],
     config:       ['json','yaml','toml'],
     spreadsheet:  ['csv','json','xlsx'],
@@ -1137,21 +1160,6 @@ async function convertDocument(input, output, format, options, emit) {
     emit(60, 'Rendering PDF…');
     await htmlToPdf(html, output);
 
-  } else if (ext === 'pdf' && format === 'txt') {
-    emit(40, 'Extracting PDF text…');
-    try {
-      const pdfParse = r('pdf-parse');
-      const dataBuffer = fs.readFileSync(input);
-      const parsed = await pdfParse(dataBuffer);
-      fs.writeFileSync(output, parsed.text || `PDF — ${parsed.numpages} page(s)\nFile: ${path.basename(input)}\n`, 'utf-8');
-    } catch (e) {
-      // Fallback to pdf-lib
-      const { PDFDocument } = r('pdf-lib');
-      const data = fs.readFileSync(input);
-      const doc  = await PDFDocument.load(data);
-      fs.writeFileSync(output, `PDF — ${doc.getPageCount()} page(s)\nFile: ${path.basename(input)}\n`, 'utf-8');
-    }
-
   } else if (ext === 'pdf' && format === 'html') {
     emit(40, 'Converting PDF → HTML…');
     const { PDFDocument } = r('pdf-lib');
@@ -1421,13 +1429,13 @@ async function extractText(input, outputDir, ext, emit, options = {}) {
   if (ext === 'pdf') {
     emit(20, 'Extracting PDF text…');
     const buf = fs.readFileSync(input);
+    const ocrImages = options.ocrImages || false;
+    const dividePages = options.dividePages || false;
 
-    // ── Step 1: Try native text extraction via pdf-parse ──
-    let nativeText = '';
-    let pageTexts = [];
+    // Step 1: Extract native text page-by-page via pdf-parse
+    const pageTexts = [];
     try {
       const pdfParse = r('pdf-parse');
-      const collectedPages = [];
       await pdfParse(buf, {
         pagerender: async (pageData) => {
           try {
@@ -1438,107 +1446,65 @@ async function extractText(input, outputDir, ext, emit, options = {}) {
               text += item.str;
               lastY = item.transform[5];
             }
-            collectedPages.push(text.trim());
+            pageTexts.push(text.trim());
           } catch {
-            collectedPages.push('');
+            pageTexts.push('');
           }
           return '';
         }
       });
-      pageTexts = collectedPages;
-      nativeText = pageTexts.join('\n').trim();
     } catch {
-      nativeText = '';
+      // pdf-parse failed entirely
     }
+    emit(50, 'Text extracted from PDF');
 
-    // ── Step 2: If native text is empty/whitespace ⇒ OCR fallback ──
-    if (!nativeText || nativeText.replace(/\s/g, '').length < 20) {
-      emit(25, 'Scanned PDF detected — running OCR…');
+    // Step 2: If OCR is enabled, OCR pages that have no/little native text
+    if (ocrImages) {
+      emit(55, 'Running OCR on image pages…');
       try {
         const puppeteer = r('puppeteer');
         const Tesseract = r('tesseract.js');
-
-        // Render PDF pages to images via Puppeteer
-        const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
-        const page = await browser.newPage();
-        const fileUrl = `file:///${input.replace(/\\/g, '/')}`;
-        await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-
-        // Get page count from PDF.js viewer
-        let totalPages = 1;
-        try {
-          totalPages = await page.evaluate(() => {
-            if (window.PDFViewerApplication && window.PDFViewerApplication.pagesCount) {
-              return window.PDFViewerApplication.pagesCount;
-            }
-            return document.querySelectorAll('.page').length || 1;
-          });
-        } catch { /* use default */ }
-
-        await browser.close();
-
-        // Alternative: render each page using pdf-poppler or canvas
-        // Since Puppeteer's native PDF viewer is Chrome's, use pdf2pic or similar
-        // Simpler approach: just render the whole PDF as page screenshots
-        const browser2 = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
-        const page2 = await browser2.newPage();
-        await page2.setViewport({ width: 1200, height: 1600 });
-
-        const ocrTexts = [];
-        const tmpDir = path.join(outputDir, '_ocr_tmp');
+        const tmpDir = path.join(outputDir, `_ocr_tmp_${Date.now()}`);
         fs.mkdirSync(tmpDir, { recursive: true });
 
-        // Render each page by navigating to PDF with page anchor
-        for (let i = 1; i <= totalPages; i++) {
-          emit(25 + Math.round((i / totalPages) * 60), `OCR page ${i}/${totalPages}…`);
-          try {
-            await page2.goto(`${fileUrl}#page=${i}`, { waitUntil: 'networkidle0', timeout: 15000 });
-            await new Promise(r => setTimeout(r, 800)); // wait for render
-            const imgPath = path.join(tmpDir, `page_${i}.png`);
-            await page2.screenshot({ path: imgPath, fullPage: false });
+        const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1200, height: 1600 });
+        const fileUrl = `file:///${input.replace(/\\/g, '/')}`;
 
-            // OCR the screenshot
-            const { data: { text } } = await Tesseract.recognize(imgPath, 'eng');
-            ocrTexts.push(text.trim());
-          } catch {
-            ocrTexts.push(`(OCR failed for page ${i})`);
-          }
-        }
-
-        await browser2.close();
-
-        // Clean up temp images
-        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-
-        // Write output
-        if (dividePages) {
-          let output = '';
-          for (let i = 0; i < ocrTexts.length; i++) {
-            output += `==Page ${i + 1}==\n${ocrTexts[i]}\n\n`;
-          }
-          fs.writeFileSync(outputFile, output.trim(), 'utf-8');
-        } else {
-          fs.writeFileSync(outputFile, ocrTexts.join('\n\n').trim() || '(no text found)', 'utf-8');
-        }
-        emit(90, 'OCR complete');
-      } catch (ocrErr) {
-        fs.writeFileSync(outputFile,
-          `This PDF contains scanned images. OCR extraction failed:\n${ocrErr.message}\n\n` +
-          `Make sure the PDF is not password-protected.`, 'utf-8');
-      }
-    } else {
-      // ── Native text was found — write it ──
-      if (dividePages && pageTexts.length > 0) {
-        let output = '';
         for (let i = 0; i < pageTexts.length; i++) {
-          output += `==Page ${i + 1}==\n${pageTexts[i]}\n\n`;
+          const hasText = pageTexts[i].replace(/\s/g, '').length >= 10;
+          if (!hasText) {
+            emit(55 + Math.round((i / pageTexts.length) * 30), `OCR page ${i + 1}/${pageTexts.length}…`);
+            try {
+              await page.goto(`${fileUrl}#page=${i + 1}`, { waitUntil: 'networkidle0', timeout: 15000 });
+              await new Promise(r => setTimeout(r, 800));
+              const imgPath = path.join(tmpDir, `page_${i + 1}.png`);
+              await page.screenshot({ path: imgPath, fullPage: false });
+              const { data: { text } } = await Tesseract.recognize(imgPath, 'eng');
+              if (text.trim().length > 0) pageTexts[i] = text.trim();
+            } catch {}
+          }
         }
-        fs.writeFileSync(outputFile, output.trim(), 'utf-8');
-      } else {
-        fs.writeFileSync(outputFile, nativeText, 'utf-8');
-      }
-      emit(85, 'Text extracted');
+
+        await browser.close();
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      } catch {}
     }
+
+    // Step 3: Write output
+    emit(88, 'Writing output…');
+    if (dividePages) {
+      let output = '';
+      for (let i = 0; i < pageTexts.length; i++) {
+        output += `==Page ${i + 1}==\n${pageTexts[i] || '(empty)'}\n\n`;
+      }
+      fs.writeFileSync(outputFile, output.trim(), 'utf-8');
+    } else {
+      const allText = pageTexts.filter(t => t).join('\n\n').trim();
+      fs.writeFileSync(outputFile, allText || '(no text found in this PDF)', 'utf-8');
+    }
+    emit(92, 'Done');
   }
   // DOCX
   else if (ext === 'docx' || ext === 'doc') {

@@ -113,6 +113,7 @@ settingsOverlay.addEventListener('click', (e) => {
 threadSlider.addEventListener('input', () => {
   state.threads = parseInt(threadSlider.value);
   threadCount.textContent = threadSlider.value;
+  if (window.electronAPI.saveSettings) window.electronAPI.saveSettings({ threads: state.threads });
 });
 
 githubLink.addEventListener('click', (e) => {
@@ -122,7 +123,45 @@ githubLink.addEventListener('click', (e) => {
 
 ytdlpQuality.addEventListener('change', () => {
   state.ytdlpQuality = ytdlpQuality.value;
+  if (window.electronAPI.saveSettings) window.electronAPI.saveSettings({ ytdlpQuality: state.ytdlpQuality });
 });
+
+// Divide pages toggle persistence
+const dividePagesToggle = $('opt-divide-pages');
+if (dividePagesToggle) {
+  dividePagesToggle.addEventListener('change', () => {
+    if (window.electronAPI.saveSettings) window.electronAPI.saveSettings({ dividePages: dividePagesToggle.checked });
+  });
+}
+
+// OCR images toggle persistence
+const ocrImagesToggle = $('opt-ocr-images');
+if (ocrImagesToggle) {
+  ocrImagesToggle.addEventListener('change', () => {
+    if (window.electronAPI.saveSettings) window.electronAPI.saveSettings({ ocrImages: ocrImagesToggle.checked });
+  });
+}
+
+// Load saved settings on startup
+if (window.electronAPI.loadSettings) {
+  window.electronAPI.loadSettings().then(s => {
+    if (s.threads != null) {
+      state.threads = s.threads;
+      threadSlider.value = s.threads;
+      threadCount.textContent = s.threads;
+    }
+    if (s.ytdlpQuality != null) {
+      state.ytdlpQuality = s.ytdlpQuality;
+      ytdlpQuality.value = s.ytdlpQuality;
+    }
+    if (s.dividePages != null && dividePagesToggle) {
+      dividePagesToggle.checked = s.dividePages;
+    }
+    if (s.ocrImages != null && ocrImagesToggle) {
+      ocrImagesToggle.checked = s.ocrImages;
+    }
+  });
+}
 
 // --------------------------- Download mode toggle ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 downloadHint.addEventListener('click', () => {
@@ -573,6 +612,7 @@ function gatherOptions() {
   o.fixPlatform = fixPlatformSel.value;
   // Extraction
   o.dividePages = $('opt-divide-pages')?.checked || false;
+  o.ocrImages = $('opt-ocr-images')?.checked || false;
   return o;
 }
 

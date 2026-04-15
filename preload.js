@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bgApply: (params) => ipcRenderer.invoke('bg:apply', params),
   bgApplyWithRefine: (params) => ipcRenderer.invoke('bg:applyWithRefine', params),
 
+  // Settings persistence
+  loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: (data) => ipcRenderer.send('settings:save', data),
+
   // Auto-update
   getVersion: () => ipcRenderer.invoke('app:version'),
   onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, info) => cb(info)),

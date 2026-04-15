@@ -310,7 +310,15 @@
         <!-- Extraction options -->
         <div class="option-group" id="opt-extract" style="display:none">
           <div class="option-row">
-            <label class="option-label" for="opt-divide-pages">Divide Pages</label>
+            <label class="option-label" for="opt-ocr-images">Image to Text</label>
+            <label class="option-toggle">
+              <input type="checkbox" id="opt-ocr-images" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+          <p class="option-hint">Uses OCR to extract text from scanned/image-based pages. Slower but catches text in images.</p>
+          <div class="option-row" style="margin-top:8px">
+            <label class="option-label" for="opt-divide-pages">Page Separation</label>
             <label class="option-toggle">
               <input type="checkbox" id="opt-divide-pages" />
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
