@@ -35,8 +35,8 @@
     "electron-updater": "^6.3.0"
   },
   "devDependencies": {
-    "electron": "^30.0.0",
-    "electron-builder": "^24.0.0"
+    "electron": "30.0.0",
+    "electron-builder": "^26.0.0"
   },
   "build": {
     "appId": "com.contraryconvertor.app",
