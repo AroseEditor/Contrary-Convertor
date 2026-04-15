@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bgApplyWithRefine: (params) => ipcRenderer.invoke('bg:applyWithRefine', params),
 
   // Auto-update
+  getVersion: () => ipcRenderer.invoke('app:version'),
   onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, info) => cb(info)),
   onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (_e, pct) => cb(pct)),
   onUpdateReady: (cb) => ipcRenderer.on('update:ready', (_e, installerPath) => cb(installerPath)),

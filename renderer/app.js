@@ -83,6 +83,14 @@ $('btn-minimize').addEventListener('click', () => window.electronAPI.minimize())
 $('btn-maximize').addEventListener('click', () => window.electronAPI.maximize());
 $('btn-close').addEventListener('click',    () => window.electronAPI.close());
 
+// Populate version in Settings
+if (window.electronAPI.getVersion) {
+  window.electronAPI.getVersion().then(v => {
+    const el = $('settings-app-version');
+    if (el) el.textContent = `Current version: v${v}`;
+  });
+}
+
 // --------------------------- Clear history ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 historyClearBtn.addEventListener('click', () => {
   state.history = [];

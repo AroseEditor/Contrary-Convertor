@@ -53,6 +53,7 @@ app.on('window-all-closed', () => {
 app.on('activate', () => { if (!mainWindow) createMainWindow(); });
 
 // ─── Custom Auto-Update via GitHub Releases API ──────────────────────────────
+ipcMain.handle('app:version', () => app.getVersion());
 const REPO_OWNER = 'AroseEditor';
 const REPO_NAME  = 'Contrary-Convertor';
 const CURRENT_VERSION = app.getVersion(); // reads from package.json

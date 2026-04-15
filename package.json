@@ -1,6 +1,6 @@
 {
   "name": "contrary-convertor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local-first file conversion. 50+ formats. Zero uploads. Zero limits.",
   "author": "Ayush.ue5",
   "main": "main.js",
@@ -39,11 +39,13 @@
   },
   "build": {
     "appId": "com.contraryconvertor.app",
-    "publish": [{
-      "provider": "github",
-      "owner": "AroseEditor",
-      "repo": "Contrary-Convertor"
-    }],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "AroseEditor",
+        "repo": "Contrary-Convertor"
+      }
+    ],
     "productName": "Contrary Convertor",
     "copyright": "Copyright © 2026 Ayush.ue5",
     "icon": "assets/icon.png",
