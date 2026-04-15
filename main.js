@@ -1419,49 +1419,125 @@ async function extractText(input, outputDir, ext, emit, options = {}) {
 
   // PDF
   if (ext === 'pdf') {
-    emit(30, 'Extracting PDF text…');
+    emit(20, 'Extracting PDF text…');
+    const buf = fs.readFileSync(input);
+
+    // ── Step 1: Try native text extraction via pdf-parse ──
+    let nativeText = '';
+    let pageTexts = [];
     try {
       const pdfParse = r('pdf-parse');
-      const buf = fs.readFileSync(input);
-
-      if (dividePages) {
-        // Extract with page dividers using pdf-parse page render callback
-        const pages = [];
-        const parsed = await pdfParse(buf, {
-          pagerender: async (pageData) => {
-            const textContent = await pageData.getTextContent();
-            return textContent.items.map(item => item.str).join(' ');
-          }
-        });
-        // pdf-parse concatenates pages — re-parse per page
-        const { PDFDocument } = r('pdf-lib');
-        const pdfDoc = await PDFDocument.load(buf, { ignoreEncryption: true });
-        const totalPages = pdfDoc.getPageCount();
-        // Use pdf-parse per-page by splitting on form feeds or re-parsing
-        // Simpler approach: parse full text, then use page markers
-        let output = '';
-        // Re-extract page by page using individual page PDFs
-        for (let i = 0; i < totalPages; i++) {
-          emit(30 + Math.round((i / totalPages) * 55), `Extracting page ${i + 1}/${totalPages}…`);
+      const collectedPages = [];
+      await pdfParse(buf, {
+        pagerender: async (pageData) => {
           try {
-            const singleDoc = await PDFDocument.create();
-            const [copiedPage] = await singleDoc.copyPages(pdfDoc, [i]);
-            singleDoc.addPage(copiedPage);
-            const singleBytes = await singleDoc.save();
-            const singleParsed = await pdfParse(Buffer.from(singleBytes));
-            const pageText = (singleParsed.text || '').trim();
-            output += `==Page ${i + 1}==\n${pageText}\n\n`;
+            const textContent = await pageData.getTextContent();
+            let lastY = null, text = '';
+            for (const item of textContent.items) {
+              if (lastY !== null && lastY !== item.transform[5]) text += '\n';
+              text += item.str;
+              lastY = item.transform[5];
+            }
+            collectedPages.push(text.trim());
           } catch {
-            output += `==Page ${i + 1}==\n(extraction failed)\n\n`;
+            collectedPages.push('');
           }
+          return '';
+        }
+      });
+      pageTexts = collectedPages;
+      nativeText = pageTexts.join('\n').trim();
+    } catch {
+      nativeText = '';
+    }
+
+    // ── Step 2: If native text is empty/whitespace ⇒ OCR fallback ──
+    if (!nativeText || nativeText.replace(/\s/g, '').length < 20) {
+      emit(25, 'Scanned PDF detected — running OCR…');
+      try {
+        const puppeteer = r('puppeteer');
+        const Tesseract = r('tesseract.js');
+
+        // Render PDF pages to images via Puppeteer
+        const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
+        const page = await browser.newPage();
+        const fileUrl = `file:///${input.replace(/\\/g, '/')}`;
+        await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+
+        // Get page count from PDF.js viewer
+        let totalPages = 1;
+        try {
+          totalPages = await page.evaluate(() => {
+            if (window.PDFViewerApplication && window.PDFViewerApplication.pagesCount) {
+              return window.PDFViewerApplication.pagesCount;
+            }
+            return document.querySelectorAll('.page').length || 1;
+          });
+        } catch { /* use default */ }
+
+        await browser.close();
+
+        // Alternative: render each page using pdf-poppler or canvas
+        // Since Puppeteer's native PDF viewer is Chrome's, use pdf2pic or similar
+        // Simpler approach: just render the whole PDF as page screenshots
+        const browser2 = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
+        const page2 = await browser2.newPage();
+        await page2.setViewport({ width: 1200, height: 1600 });
+
+        const ocrTexts = [];
+        const tmpDir = path.join(outputDir, '_ocr_tmp');
+        fs.mkdirSync(tmpDir, { recursive: true });
+
+        // Render each page by navigating to PDF with page anchor
+        for (let i = 1; i <= totalPages; i++) {
+          emit(25 + Math.round((i / totalPages) * 60), `OCR page ${i}/${totalPages}…`);
+          try {
+            await page2.goto(`${fileUrl}#page=${i}`, { waitUntil: 'networkidle0', timeout: 15000 });
+            await new Promise(r => setTimeout(r, 800)); // wait for render
+            const imgPath = path.join(tmpDir, `page_${i}.png`);
+            await page2.screenshot({ path: imgPath, fullPage: false });
+
+            // OCR the screenshot
+            const { data: { text } } = await Tesseract.recognize(imgPath, 'eng');
+            ocrTexts.push(text.trim());
+          } catch {
+            ocrTexts.push(`(OCR failed for page ${i})`);
+          }
+        }
+
+        await browser2.close();
+
+        // Clean up temp images
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+        // Write output
+        if (dividePages) {
+          let output = '';
+          for (let i = 0; i < ocrTexts.length; i++) {
+            output += `==Page ${i + 1}==\n${ocrTexts[i]}\n\n`;
+          }
+          fs.writeFileSync(outputFile, output.trim(), 'utf-8');
+        } else {
+          fs.writeFileSync(outputFile, ocrTexts.join('\n\n').trim() || '(no text found)', 'utf-8');
+        }
+        emit(90, 'OCR complete');
+      } catch (ocrErr) {
+        fs.writeFileSync(outputFile,
+          `This PDF contains scanned images. OCR extraction failed:\n${ocrErr.message}\n\n` +
+          `Make sure the PDF is not password-protected.`, 'utf-8');
+      }
+    } else {
+      // ── Native text was found — write it ──
+      if (dividePages && pageTexts.length > 0) {
+        let output = '';
+        for (let i = 0; i < pageTexts.length; i++) {
+          output += `==Page ${i + 1}==\n${pageTexts[i]}\n\n`;
         }
         fs.writeFileSync(outputFile, output.trim(), 'utf-8');
       } else {
-        const parsed = await pdfParse(buf);
-        fs.writeFileSync(outputFile, parsed.text || '(no text found)', 'utf-8');
+        fs.writeFileSync(outputFile, nativeText, 'utf-8');
       }
-    } catch {
-      fs.writeFileSync(outputFile, '(PDF text extraction failed)', 'utf-8');
+      emit(85, 'Text extracted');
     }
   }
   // DOCX
