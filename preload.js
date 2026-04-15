@@ -46,11 +46,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bgApplyWithRefine: (params) => ipcRenderer.invoke('bg:applyWithRefine', params),
 
   // Auto-update
-  onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, ver) => cb(ver)),
+  onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, info) => cb(info)),
   onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (_e, pct) => cb(pct)),
-  onUpdateReady: (cb) => ipcRenderer.on('update:ready', () => cb()),
+  onUpdateReady: (cb) => ipcRenderer.on('update:ready', (_e, installerPath) => cb(installerPath)),
   onUpdateNotAvailable: (cb) => ipcRenderer.on('update:not-available', () => cb()),
+  onUpdateError: (cb) => ipcRenderer.on('update:error', (_e, msg) => cb(msg)),
   checkForUpdates: () => ipcRenderer.send('update:check'),
-  downloadUpdate: () => ipcRenderer.send('update:download'),
-  installUpdate: () => ipcRenderer.send('update:install'),
+  downloadUpdate: (url) => ipcRenderer.send('update:download', url),
+  installUpdate: (path) => ipcRenderer.send('update:install', path),
 });

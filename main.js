@@ -5,7 +5,7 @@ const path   = require('path');
 const fs     = require('fs');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
-const { autoUpdater } = require('electron-updater');
+const https  = require('https');
 
 // ─── Module state ─────────────────────────────────────────────────────────────
 let mainWindow  = null;
@@ -44,11 +44,7 @@ function createMainWindow() {
 app.whenReady().then(() => {
   createMainWindow();
   // Check for updates 5s after launch (non-blocking)
-  setTimeout(() => {
-    autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = false;
-    autoUpdater.checkForUpdates().catch(() => {});
-  }, 5000);
+  setTimeout(() => checkForUpdates(), 5000);
 });
 
 app.on('window-all-closed', () => {
@@ -56,27 +52,169 @@ app.on('window-all-closed', () => {
 });
 app.on('activate', () => { if (!mainWindow) createMainWindow(); });
 
-// ─── Auto-update events ───────────────────────────────────────────────────────
-autoUpdater.on('update-available', (info) => {
-  if (mainWindow) mainWindow.webContents.send('update:available', info.version);
-});
-autoUpdater.on('download-progress', (progress) => {
-  if (mainWindow) mainWindow.webContents.send('update:progress', Math.round(progress.percent));
-});
-autoUpdater.on('update-downloaded', () => {
-  if (mainWindow) mainWindow.webContents.send('update:ready');
-});
-autoUpdater.on('update-not-available', () => {
-  if (mainWindow) mainWindow.webContents.send('update:not-available');
-});
-ipcMain.on('update:download', () => {
-  autoUpdater.downloadUpdate().catch(() => {});
-});
-ipcMain.on('update:install', () => {
-  autoUpdater.quitAndInstall(false, true);
-});
+// ─── Custom Auto-Update via GitHub Releases API ──────────────────────────────
+const REPO_OWNER = 'AroseEditor';
+const REPO_NAME  = 'Contrary-Convertor';
+const CURRENT_VERSION = app.getVersion(); // reads from package.json
+
+function compareVersions(a, b) {
+  // Compare semver: returns 1 if a > b, -1 if a < b, 0 if equal
+  const pa = a.replace(/^v/, '').split('.').map(Number);
+  const pb = b.replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const va = pa[i] || 0, vb = pb[i] || 0;
+    if (va > vb) return 1;
+    if (va < vb) return -1;
+  }
+  return 0;
+}
+
+function githubGet(urlPath) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'api.github.com',
+      path: urlPath,
+      headers: { 'User-Agent': 'Contrary-Convertor-Updater' },
+    };
+    https.get(options, (res) => {
+      // Handle redirects
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        const redirectUrl = new URL(res.headers.location);
+        const redirOptions = {
+          hostname: redirectUrl.hostname,
+          path: redirectUrl.pathname + redirectUrl.search,
+          headers: { 'User-Agent': 'Contrary-Convertor-Updater' },
+        };
+        https.get(redirOptions, (res2) => {
+          let data = '';
+          res2.on('data', c => data += c);
+          res2.on('end', () => {
+            try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid JSON')); }
+          });
+        }).on('error', reject);
+        return;
+      }
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { reject(new Error('Invalid JSON')); }
+      });
+    }).on('error', reject);
+  });
+}
+
+function getPlatformAssetPattern() {
+  switch (process.platform) {
+    case 'win32':  return /\.exe$/i;
+    case 'darwin': return /\.dmg$/i;
+    case 'linux':  return /\.AppImage$/i;
+    default:       return null;
+  }
+}
+
+async function checkForUpdates() {
+  try {
+    const release = await githubGet(`/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`);
+    if (!release || !release.tag_name) {
+      if (mainWindow) mainWindow.webContents.send('update:not-available');
+      return;
+    }
+
+    const latestVersion = release.tag_name; // e.g. "v1.1.0"
+    if (compareVersions(latestVersion, CURRENT_VERSION) > 0) {
+      // Find the right asset for this platform
+      const pattern = getPlatformAssetPattern();
+      const asset = pattern && release.assets
+        ? release.assets.find(a => pattern.test(a.name))
+        : null;
+
+      if (mainWindow) {
+        mainWindow.webContents.send('update:available', {
+          version: latestVersion.replace(/^v/, ''),
+          downloadUrl: asset ? asset.browser_download_url : release.html_url,
+          hasDirectDownload: !!asset,
+        });
+      }
+    } else {
+      if (mainWindow) mainWindow.webContents.send('update:not-available');
+    }
+  } catch {
+    if (mainWindow) mainWindow.webContents.send('update:not-available');
+  }
+}
+
+function downloadFile(url, destPath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const doDownload = (downloadUrl) => {
+      https.get(downloadUrl, { headers: { 'User-Agent': 'Contrary-Convertor-Updater' } }, (res) => {
+        // Follow redirects (GitHub uses them for asset downloads)
+        if (res.statusCode === 301 || res.statusCode === 302) {
+          return doDownload(res.headers.location);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+
+        const totalBytes = parseInt(res.headers['content-length'], 10) || 0;
+        let downloaded = 0;
+        const file = fs.createWriteStream(destPath);
+
+        res.on('data', (chunk) => {
+          downloaded += chunk.length;
+          file.write(chunk);
+          if (totalBytes > 0 && onProgress) {
+            onProgress(Math.round((downloaded / totalBytes) * 100));
+          }
+        });
+
+        res.on('end', () => {
+          file.end();
+          file.on('finish', () => resolve(destPath));
+        });
+
+        res.on('error', (err) => {
+          file.close();
+          fs.unlinkSync(destPath);
+          reject(err);
+        });
+      }).on('error', reject);
+    };
+    doDownload(url);
+  });
+}
+
 ipcMain.on('update:check', () => {
-  autoUpdater.checkForUpdates().catch(() => {});
+  checkForUpdates();
+});
+
+ipcMain.on('update:download', async (_event, downloadUrl) => {
+  try {
+    const ext = process.platform === 'win32' ? '.exe' : (process.platform === 'darwin' ? '.dmg' : '.AppImage');
+    const tmpPath = path.join(app.getPath('temp'), `ContraryConvertor_Update${ext}`);
+
+    await downloadFile(downloadUrl, tmpPath, (pct) => {
+      if (mainWindow) mainWindow.webContents.send('update:progress', pct);
+    });
+
+    if (mainWindow) mainWindow.webContents.send('update:ready', tmpPath);
+  } catch (err) {
+    if (mainWindow) mainWindow.webContents.send('update:error', err.message);
+  }
+});
+
+ipcMain.on('update:install', (_event, installerPath) => {
+  if (process.platform === 'win32') {
+    // Run the NSIS installer and quit
+    spawn(installerPath, ['/S'], { detached: true, stdio: 'ignore' }).unref();
+  } else if (process.platform === 'darwin') {
+    // Open the DMG
+    spawn('open', [installerPath], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    // Make AppImage executable and run it
+    fs.chmodSync(installerPath, 0o755);
+    spawn(installerPath, [], { detached: true, stdio: 'ignore' }).unref();
+  }
+  app.quit();
 });
 
 // ─── Window controls ──────────────────────────────────────────────────────────

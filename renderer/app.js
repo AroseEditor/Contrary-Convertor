@@ -1611,21 +1611,25 @@ btnApply.addEventListener('click', async () => {
 
   if (!popup || !window.electronAPI?.onUpdateAvailable) return;
 
-  window.electronAPI.onUpdateAvailable((version) => {
-    versionEl.textContent = `v${version}`;
+  let currentDownloadUrl = '';
+  let currentInstallerPath = '';
+
+  window.electronAPI.onUpdateAvailable((info) => {
+    versionEl.textContent = `v${info.version}`;
+    currentDownloadUrl = info.downloadUrl;
     popup.style.display = 'flex';
+    actions.style.display = 'flex';
+    restartActions.style.display = 'none';
+    progressWrap.style.display = 'none';
     popup.classList.remove('slide-out');
     popup.classList.add('slide-in');
-    // Reset button
     if (checkBtnText) checkBtnText.textContent = 'Check for Updates';
     if (checkBtn) checkBtn.disabled = false;
   });
 
   window.electronAPI.onUpdateNotAvailable(() => {
-    // Reset button
     if (checkBtnText) checkBtnText.textContent = 'Check for Updates';
     if (checkBtn) checkBtn.disabled = false;
-    // Show "up to date" toast
     if (toast) {
       toast.style.display = 'flex';
       toast.classList.remove('toast-out');
@@ -1638,7 +1642,6 @@ btnApply.addEventListener('click', async () => {
     }
   });
 
-  // Settings button: Check for Updates
   if (checkBtn) {
     checkBtn.addEventListener('click', () => {
       checkBtnText.textContent = 'Checking…';
@@ -1651,7 +1654,7 @@ btnApply.addEventListener('click', async () => {
     actions.style.display = 'none';
     progressWrap.style.display = 'flex';
     progressText.textContent = 'Starting…';
-    window.electronAPI.downloadUpdate();
+    window.electronAPI.downloadUpdate(currentDownloadUrl);
   });
 
   skipBtn.addEventListener('click', () => {
@@ -1665,12 +1668,24 @@ btnApply.addEventListener('click', async () => {
     progressText.textContent = pct + '%';
   });
 
-  window.electronAPI.onUpdateReady(() => {
+  window.electronAPI.onUpdateReady((installerPath) => {
+    currentInstallerPath = installerPath;
     progressWrap.style.display = 'none';
     restartActions.style.display = 'flex';
   });
 
+  if (window.electronAPI.onUpdateError) {
+    window.electronAPI.onUpdateError(() => {
+      progressText.textContent = 'Failed';
+      setTimeout(() => {
+        popup.classList.remove('slide-in');
+        popup.classList.add('slide-out');
+        setTimeout(() => { popup.style.display = 'none'; }, 400);
+      }, 2000);
+    });
+  }
+
   restartBtn.addEventListener('click', () => {
-    window.electronAPI.installUpdate();
+    window.electronAPI.installUpdate(currentInstallerPath);
   });
 })();
