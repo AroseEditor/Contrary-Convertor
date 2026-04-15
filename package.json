@@ -4,6 +4,10 @@
   "description": "Local-first file conversion. 50+ formats. Zero uploads. Zero limits.",
   "author": "Ayush.ue5",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AroseEditor/Contrary-Convertor.git"
+  },
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win nsis"
@@ -28,7 +32,7 @@
     "tesseract.js": "^5.0.0",
     "obj2gltf": "^3.2.0",
     "@iarna/toml": "^2.2.5",
-    "@imgly/background-removal-node": "^1.4.5"
+    "electron-updater": "^6.3.0"
   },
   "devDependencies": {
     "electron": "^30.0.0",
@@ -36,6 +40,11 @@
   },
   "build": {
     "appId": "com.contraryconvertor.app",
+    "publish": [{
+      "provider": "github",
+      "owner": "AroseEditor",
+      "repo": "Contrary-Convertor"
+    }],
     "productName": "Contrary Convertor",
     "copyright": "Copyright © 2026 Ayush.ue5",
     "icon": "assets/icon.png",

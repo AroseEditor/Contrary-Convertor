@@ -15,6 +15,28 @@
   <!-- Scanline overlay for CRT hacker effect -->
   <div class="scanline-overlay" aria-hidden="true"></div>
 
+  <!-- Update popup -->
+  <div class="update-popup" id="update-popup" style="display:none">
+    <div class="update-popup-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v14M5 9l7 7 7-7"/><path d="M5 21h14" stroke-linecap="round"/></svg>
+    </div>
+    <div class="update-popup-body">
+      <div class="update-popup-title">Update Available</div>
+      <div class="update-popup-version" id="update-version">v0.0.0</div>
+      <div class="update-popup-progress" id="update-progress-wrap" style="display:none">
+        <div class="update-progress-bar"><div class="update-progress-fill" id="update-progress-fill"></div></div>
+        <span class="update-progress-text" id="update-progress-text">0%</span>
+      </div>
+    </div>
+    <div class="update-popup-actions" id="update-actions">
+      <button class="update-btn update-btn-install" id="update-install-btn">Install</button>
+      <button class="update-btn update-btn-skip" id="update-skip-btn">Skip</button>
+    </div>
+    <div class="update-popup-actions" id="update-restart-actions" style="display:none">
+      <button class="update-btn update-btn-install" id="update-restart-btn">Restart Now</button>
+    </div>
+  </div>
+
   <!-- SVG noise filter -->
   <svg class="svg-filters" aria-hidden="true">
     <defs>
@@ -89,8 +111,23 @@
           </select>
           <p class="option-hint">Quality preset for YouTube, Instagram, Telegram and other video downloads.</p>
         </div>
+        <div class="settings-divider"></div>
+        <div class="settings-group">
+          <div class="settings-group-title">Updates</div>
+          <button class="settings-update-btn" id="btn-check-updates">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v14M5 9l7 7 7-7"/><path d="M5 21h14" stroke-linecap="round"/></svg>
+            <span id="btn-check-updates-text">Check for Updates</span>
+          </button>
+          <p class="option-hint">Current version: v1.0.0</p>
+        </div>
       </div>
     </div>
+  </div>
+
+  <!-- No updates toast -->
+  <div class="update-toast" id="update-toast" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+    <span>You're up to date!</span>
   </div>
 
   <!-- Main Content -->
@@ -268,6 +305,18 @@
             </select>
           </div>
           <p class="option-hint">Re-encodes to MP4 with H.264 + AAC, correct pixel format, faststart flag, and platform-safe resolution/bitrate caps.</p>
+        </div>
+
+        <!-- Extraction options -->
+        <div class="option-group" id="opt-extract" style="display:none">
+          <div class="option-row">
+            <label class="option-label" for="opt-divide-pages">Divide Pages</label>
+            <label class="option-toggle">
+              <input type="checkbox" id="opt-divide-pages" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+          <p class="option-hint">Adds ==Page N== dividers between each page in the output text. For spreadsheets, divides by sheet name.</p>
         </div>
 
       </div>

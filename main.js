@@ -5,6 +5,7 @@ const path   = require('path');
 const fs     = require('fs');
 const { spawn } = require('child_process');
 const { pathToFileURL } = require('url');
+const { autoUpdater } = require('electron-updater');
 
 // ─── Module state ─────────────────────────────────────────────────────────────
 let mainWindow  = null;
@@ -42,12 +43,41 @@ function createMainWindow() {
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   createMainWindow();
+  // Check for updates 5s after launch (non-blocking)
+  setTimeout(() => {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 5000);
 });
 
 app.on('window-all-closed', () => {
   app.quit();
 });
 app.on('activate', () => { if (!mainWindow) createMainWindow(); });
+
+// ─── Auto-update events ───────────────────────────────────────────────────────
+autoUpdater.on('update-available', (info) => {
+  if (mainWindow) mainWindow.webContents.send('update:available', info.version);
+});
+autoUpdater.on('download-progress', (progress) => {
+  if (mainWindow) mainWindow.webContents.send('update:progress', Math.round(progress.percent));
+});
+autoUpdater.on('update-downloaded', () => {
+  if (mainWindow) mainWindow.webContents.send('update:ready');
+});
+autoUpdater.on('update-not-available', () => {
+  if (mainWindow) mainWindow.webContents.send('update:not-available');
+});
+ipcMain.on('update:download', () => {
+  autoUpdater.downloadUpdate().catch(() => {});
+});
+ipcMain.on('update:install', () => {
+  autoUpdater.quitAndInstall(false, true);
+});
+ipcMain.on('update:check', () => {
+  autoUpdater.checkForUpdates().catch(() => {});
+});
 
 // ─── Window controls ──────────────────────────────────────────────────────────
 ipcMain.on('win:minimize', () => mainWindow && mainWindow.minimize());
@@ -336,26 +366,41 @@ ipcMain.handle('bg:loadImage', async (_event, { imagePath }) => {
 ipcMain.handle('bg:detectSubject', async (_event, { imagePath, model }) => {
   try {
     const sharpMod = r('sharp');
-    const pngBuf = await sharpMod(imagePath).png().toBuffer();
-    const blob = new Blob([pngBuf], { type: 'image/png' });
+    const os = require('os');
+    const tmpDir = os.tmpdir();
+    const tmpIn = path.join(tmpDir, `rembg_in_${Date.now()}.png`);
+    const tmpOut = path.join(tmpDir, `rembg_out_${Date.now()}.png`);
 
-    let bgRemoval;
-    try { bgRemoval = r('@imgly/background-removal-node'); } catch {
-      bgRemoval = await import('@imgly/background-removal-node');
-    }
-    const segFn = bgRemoval.segmentForeground || bgRemoval.default?.segmentForeground;
-    const rmFn = bgRemoval.removeBackground || bgRemoval.default?.removeBackground || bgRemoval.default;
+    // Convert input to PNG for rembg
+    await sharpMod(imagePath).png().toFile(tmpIn);
 
-    const cfg = { model: model || 'medium' };
-    let resultBlob;
-    if (segFn) {
-      // segmentForeground returns just the mask (better for manual refinement)
-      resultBlob = await segFn(blob, cfg);
-    } else {
-      resultBlob = await rmFn(blob, cfg);
-    }
-    const arrBuf = await resultBlob.arrayBuffer();
-    const resultBuf = Buffer.from(arrBuf);
+    // Run rembg CLI
+    await new Promise((resolve, reject) => {
+      // Map model names: 'small' -> u2netp, 'medium' -> u2net, 'large' -> isnet-general-use
+      const modelMap = { small: 'u2netp', medium: 'u2net', large: 'isnet-general-use' };
+      const rembgModel = modelMap[model] || 'u2net';
+      const args = ['i', '-m', rembgModel, tmpIn, tmpOut];
+      const proc = spawn('rembg', args, { shell: true, windowsHide: true });
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`rembg failed (code ${code}): ${stderr.slice(-200)}`));
+      });
+      proc.on('error', (err) => {
+        reject(new Error(
+          'rembg is not installed. Install it with: pip install rembg[cli]\n' + err.message
+        ));
+      });
+    });
+
+    // rembg outputs a transparent PNG — extract the alpha channel as the mask
+    const resultBuf = await sharpMod(tmpOut).png().toBuffer();
+
+    // Cleanup temp files
+    try { fs.unlinkSync(tmpIn); } catch {}
+    try { fs.unlinkSync(tmpOut); } catch {}
+
     return { maskBase64: resultBuf.toString('base64') };
   } catch (err) {
     return { error: err.message };
@@ -497,7 +542,7 @@ function getOutputFormats(category, ext) {
     image:        ['jpg','png','webp','avif','gif','tiff','bmp','ico','remove-bg'],
     video:        ['mp4','webm','mov','avi','mkv','gif','mp3'],
     audio:        ['mp3','wav','ogg','flac','aac','opus'],
-    document:     { pdf:['txt','html','extract-images','extract-fonts'], docx:['pdf','html','txt','extract-text'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text'] },
+    document:     { pdf:['txt','html','extract-text','extract-images','extract-fonts'], docx:['pdf','html','txt','extract-text','extract-images'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text','extract-images'] },
     data:         ['json','csv','xml','yaml','toml','env'],
     config:       ['json','yaml','toml'],
     spreadsheet:  ['csv','json','xlsx'],
@@ -635,9 +680,15 @@ ipcMain.handle('file:convert', async (event, { filePath, outputFormat, options }
     if (isFix) {
       await fixForPlatform(filePath, outputPath, options, emit);
     } else if (outputFormat === 'extract-text') {
-      await extractText(filePath, outputPath, ext, emit);
+      await extractText(filePath, outputPath, ext, emit, options);
     } else if (outputFormat === 'extract-images') {
-      await extractPdfImages(filePath, outputPath, emit);
+      if (ext === 'pdf') {
+        await extractPdfImages(filePath, outputPath, emit);
+      } else if (['docx','doc','odt'].includes(ext)) {
+        await extractDocxImages(filePath, outputPath, ext, emit);
+      } else {
+        throw new Error('Image extraction is not supported for this file type.');
+      }
     } else if (outputFormat === 'extract-fonts') {
       await extractPdfFonts(filePath, outputPath, emit);
     } else if (outputFormat === 'extract') {
@@ -1220,9 +1271,10 @@ function escHtml(t) {
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ── Text Extraction (from anything) ──────────────────────────────────────────
-async function extractText(input, outputDir, ext, emit) {
+async function extractText(input, outputDir, ext, emit, options = {}) {
   const base = path.basename(input, path.extname(input));
   const outputFile = path.join(outputDir, `${base}.txt`);
+  const dividePages = options.dividePages || false;
 
   emit(10, 'Detecting source type…');
 
@@ -1232,8 +1284,43 @@ async function extractText(input, outputDir, ext, emit) {
     try {
       const pdfParse = r('pdf-parse');
       const buf = fs.readFileSync(input);
-      const parsed = await pdfParse(buf);
-      fs.writeFileSync(outputFile, parsed.text || '(no text found)', 'utf-8');
+
+      if (dividePages) {
+        // Extract with page dividers using pdf-parse page render callback
+        const pages = [];
+        const parsed = await pdfParse(buf, {
+          pagerender: async (pageData) => {
+            const textContent = await pageData.getTextContent();
+            return textContent.items.map(item => item.str).join(' ');
+          }
+        });
+        // pdf-parse concatenates pages — re-parse per page
+        const { PDFDocument } = r('pdf-lib');
+        const pdfDoc = await PDFDocument.load(buf, { ignoreEncryption: true });
+        const totalPages = pdfDoc.getPageCount();
+        // Use pdf-parse per-page by splitting on form feeds or re-parsing
+        // Simpler approach: parse full text, then use page markers
+        let output = '';
+        // Re-extract page by page using individual page PDFs
+        for (let i = 0; i < totalPages; i++) {
+          emit(30 + Math.round((i / totalPages) * 55), `Extracting page ${i + 1}/${totalPages}…`);
+          try {
+            const singleDoc = await PDFDocument.create();
+            const [copiedPage] = await singleDoc.copyPages(pdfDoc, [i]);
+            singleDoc.addPage(copiedPage);
+            const singleBytes = await singleDoc.save();
+            const singleParsed = await pdfParse(Buffer.from(singleBytes));
+            const pageText = (singleParsed.text || '').trim();
+            output += `==Page ${i + 1}==\n${pageText}\n\n`;
+          } catch {
+            output += `==Page ${i + 1}==\n(extraction failed)\n\n`;
+          }
+        }
+        fs.writeFileSync(outputFile, output.trim(), 'utf-8');
+      } else {
+        const parsed = await pdfParse(buf);
+        fs.writeFileSync(outputFile, parsed.text || '(no text found)', 'utf-8');
+      }
     } catch {
       fs.writeFileSync(outputFile, '(PDF text extraction failed)', 'utf-8');
     }
@@ -1245,6 +1332,27 @@ async function extractText(input, outputDir, ext, emit) {
     const res = await mammoth.extractRawText({ path: input });
     fs.writeFileSync(outputFile, res.value, 'utf-8');
   }
+  // ODT
+  else if (ext === 'odt') {
+    emit(30, 'Extracting ODT text…');
+    try {
+      const StreamZip = r('node-stream-zip');
+      const zip = new StreamZip.async({ file: input });
+      const contentXml = await zip.entryData('content.xml');
+      await zip.close();
+      // Strip XML tags to get plain text
+      const text = contentXml.toString('utf-8')
+        .replace(/<text:line-break\/>/gi, '\n')
+        .replace(/<text:tab\/>/gi, '\t')
+        .replace(/<[^>]*>/g, '')
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+        .replace(/\n{3,}/g, '\n\n').trim();
+      fs.writeFileSync(outputFile, text || '(no text found)', 'utf-8');
+    } catch (e) {
+      fs.writeFileSync(outputFile, `ODT text extraction failed: ${e.message}`, 'utf-8');
+    }
+  }
   // XLSX
   else if (['xlsx','xls','ods'].includes(ext)) {
     emit(30, 'Extracting spreadsheet text…');
@@ -1252,7 +1360,11 @@ async function extractText(input, outputDir, ext, emit) {
     const wb = XLSX.readFile(input);
     let text = '';
     for (const name of wb.SheetNames) {
-      text += `── ${name} ──\n`;
+      if (dividePages) {
+        text += `==Sheet: ${name}==\n`;
+      } else {
+        text += `── ${name} ──\n`;
+      }
       text += XLSX.utils.sheet_to_csv(wb.Sheets[name]) + '\n\n';
     }
     fs.writeFileSync(outputFile, text, 'utf-8');
@@ -1303,42 +1415,137 @@ async function extractPdfImages(input, outputDir, emit) {
   emit(10, 'Loading PDF…');
 
   try {
-    const { PDFDocument } = r('pdf-lib');
+    const { PDFDocument, PDFName, PDFDict, PDFStream, PDFRef, PDFRawStream } = r('pdf-lib');
+    const sharpMod = r('sharp');
     const pdfBytes = fs.readFileSync(input);
-    const pdfDoc   = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-    const pages    = pdfDoc.getPages();
+    const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
 
-    // Use sharp to render pages as images via puppeteer
-    emit(20, 'Rendering pages…');
-    const puppeteer = r('puppeteer');
-    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
-    const page    = await browser.newPage();
+    emit(20, 'Scanning for embedded images…');
 
-    // Create an HTML page that loads the PDF
-    await page.setViewport({ width: 1200, height: 1600 });
+    let imageCount = 0;
+    const seen = new Set();
 
-    for (let i = 0; i < pages.length; i++) {
-      emit(20 + Math.round((i / pages.length) * 70), `Rendering page ${i + 1}/${pages.length}…`);
+    // Scan all indirect objects looking for Image XObjects
+    const allObjects = pdfDoc.context.enumerateIndirectObjects();
+    const imageObjects = [];
 
-      // Extract individual page as a separate PDF
-      const singleDoc = await PDFDocument.create();
-      const [copiedPage] = await singleDoc.copyPages(pdfDoc, [i]);
-      singleDoc.addPage(copiedPage);
-      const singleBytes = await singleDoc.save();
-      const tmpPdf = path.join(outputDir, `_tmp_page_${i}.pdf`);
-      fs.writeFileSync(tmpPdf, singleBytes);
-
-      // Render via puppeteer
-      await page.goto(`file:///${tmpPdf.replace(/\\/g, '/')}`, { waitUntil: 'networkidle0' });
-      await page.screenshot({ path: path.join(outputDir, `page_${i + 1}.png`), fullPage: true });
-
-      // Clean temp
-      fs.unlinkSync(tmpPdf);
+    for (const [ref, obj] of allObjects) {
+      try {
+        if (obj instanceof PDFStream || (obj && obj.dict)) {
+          const dict = obj.dict || obj;
+          if (dict instanceof PDFDict) {
+            const subtype = dict.get(PDFName.of('Subtype'));
+            if (subtype && subtype.toString() === '/Image') {
+              const refKey = `${ref.objectNumber}-${ref.generationNumber}`;
+              if (!seen.has(refKey)) {
+                seen.add(refKey);
+                imageObjects.push({ ref, stream: obj });
+              }
+            }
+          }
+        }
+      } catch {}
     }
 
-    await browser.close();
+    emit(30, `Found ${imageObjects.length} embedded images…`);
+
+    for (let i = 0; i < imageObjects.length; i++) {
+      emit(30 + Math.round((i / imageObjects.length) * 60), `Extracting image ${i + 1}/${imageObjects.length}…`);
+      try {
+        const { stream } = imageObjects[i];
+        const rawData = stream.getContents ? stream.getContents() : stream.contents;
+        if (!rawData || rawData.length === 0) continue;
+
+        const dict = stream.dict;
+        const width = dict.get(PDFName.of('Width'));
+        const height = dict.get(PDFName.of('Height'));
+        const filter = dict.get(PDFName.of('Filter'));
+        const filterStr = filter ? filter.toString() : '';
+
+        const idx = String(i + 1).padStart(3, '0');
+
+        // DCTDecode = JPEG data
+        if (filterStr.includes('DCTDecode')) {
+          fs.writeFileSync(path.join(outputDir, `image_${idx}.jpg`), rawData);
+          imageCount++;
+        }
+        // JPXDecode = JPEG2000
+        else if (filterStr.includes('JPXDecode')) {
+          fs.writeFileSync(path.join(outputDir, `image_${idx}.jp2`), rawData);
+          imageCount++;
+        }
+        // FlateDecode or raw = try to convert with sharp
+        else if (width && height) {
+          const w = typeof width === 'object' && width.numberValue ? width.numberValue : parseInt(width.toString());
+          const h = typeof height === 'object' && height.numberValue ? height.numberValue : parseInt(height.toString());
+          if (w > 0 && h > 0 && rawData.length >= w * h) {
+            try {
+              const bpc = dict.get(PDFName.of('BitsPerComponent'));
+              const bpcVal = bpc ? parseInt(bpc.toString()) : 8;
+              const cs = dict.get(PDFName.of('ColorSpace'));
+              const csStr = cs ? cs.toString() : '/DeviceRGB';
+              const channels = csStr.includes('Gray') ? 1 : (csStr.includes('CMYK') ? 4 : 3);
+
+              await sharpMod(rawData, { raw: { width: w, height: h, channels } })
+                .png()
+                .toFile(path.join(outputDir, `image_${idx}.png`));
+              imageCount++;
+            } catch {
+              // Save raw data as-is
+              fs.writeFileSync(path.join(outputDir, `image_${idx}.bin`), rawData);
+              imageCount++;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // Write summary
+    fs.writeFileSync(path.join(outputDir, 'extraction_info.txt'),
+      `Images found: ${imageObjects.length}\nSuccessfully extracted: ${imageCount}\n`, 'utf-8');
+
   } catch (e) {
-    // Fallback: just note that extraction failed
+    fs.writeFileSync(path.join(outputDir, 'error.txt'), `Image extraction error: ${e.message}`, 'utf-8');
+  }
+
+  emit(90, 'Finalizing…');
+}
+
+// ── DOCX/ODT Image Extraction ────────────────────────────────────────────────
+async function extractDocxImages(input, outputDir, ext, emit) {
+  emit(10, 'Loading document…');
+
+  try {
+    const StreamZip = r('node-stream-zip');
+    const zip = new StreamZip.async({ file: input });
+    const entries = await zip.entries();
+
+    // DOCX stores images in word/media/, ODT in Pictures/
+    const mediaPrefix = (ext === 'odt') ? 'Pictures/' : 'word/media/';
+
+    const imageEntries = Object.values(entries).filter(e =>
+      !e.isDirectory && e.name.startsWith(mediaPrefix)
+    );
+
+    emit(20, `Found ${imageEntries.length} embedded images…`);
+
+    let extracted = 0;
+    for (let i = 0; i < imageEntries.length; i++) {
+      const entry = imageEntries[i];
+      emit(20 + Math.round((i / imageEntries.length) * 70), `Extracting ${i + 1}/${imageEntries.length}…`);
+
+      const fileName = path.basename(entry.name);
+      const data = await zip.entryData(entry.name);
+      fs.writeFileSync(path.join(outputDir, fileName), data);
+      extracted++;
+    }
+
+    await zip.close();
+
+    fs.writeFileSync(path.join(outputDir, 'extraction_info.txt'),
+      `Document type: ${ext.toUpperCase()}\nImages found: ${imageEntries.length}\nExtracted: ${extracted}\n`, 'utf-8');
+
+  } catch (e) {
     fs.writeFileSync(path.join(outputDir, 'error.txt'), `Image extraction error: ${e.message}`, 'utf-8');
   }
 

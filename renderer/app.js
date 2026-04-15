@@ -447,13 +447,19 @@ function updateOptionsPanel(category, format, probe) {
   optVideo.style.display = 'none';
   optAudio.style.display = 'none';
   optFix.style.display   = 'none';
+  const optExtract = $('opt-extract');
+  if (optExtract) optExtract.style.display = 'none';
 
   const audioOnlyFmt = ['mp3','wav','ogg','flac','aac','opus'];
 
   if (format === 'fix') {
     optFix.style.display = 'flex';
+  } else if (format === 'extract-text') {
+    // Show Divide Pages option for text extraction
+    const optExtract = $('opt-extract');
+    if (optExtract) optExtract.style.display = 'flex';
   } else if (format.startsWith('extract')) {
-    // No special options for extraction
+    // No special options for image/font extraction
     hide(optionsSection);
   } else if (['json','yaml','csv','xml','toml','env','xlsx'].includes(format)) {
     // No special options for data/config conversion
@@ -557,6 +563,8 @@ function gatherOptions() {
   }
   // Fix
   o.fixPlatform = fixPlatformSel.value;
+  // Extraction
+  o.dividePages = $('opt-divide-pages')?.checked || false;
   return o;
 }
 
@@ -1584,3 +1592,85 @@ btnApply.addEventListener('click', async () => {
     setTimeout(() => { maskWorkspace.style.display = 'flex'; maskLoading.classList.remove('visible'); }, 3000);
   }
 });
+
+// --------------------------- Auto-Update -----------------------------------------------
+(function initAutoUpdate() {
+  const popup = $('update-popup');
+  const versionEl = $('update-version');
+  const installBtn = $('update-install-btn');
+  const skipBtn = $('update-skip-btn');
+  const restartBtn = $('update-restart-btn');
+  const actions = $('update-actions');
+  const restartActions = $('update-restart-actions');
+  const progressWrap = $('update-progress-wrap');
+  const progressFill = $('update-progress-fill');
+  const progressText = $('update-progress-text');
+  const checkBtn = $('btn-check-updates');
+  const checkBtnText = $('btn-check-updates-text');
+  const toast = $('update-toast');
+
+  if (!popup || !window.electronAPI?.onUpdateAvailable) return;
+
+  window.electronAPI.onUpdateAvailable((version) => {
+    versionEl.textContent = `v${version}`;
+    popup.style.display = 'flex';
+    popup.classList.remove('slide-out');
+    popup.classList.add('slide-in');
+    // Reset button
+    if (checkBtnText) checkBtnText.textContent = 'Check for Updates';
+    if (checkBtn) checkBtn.disabled = false;
+  });
+
+  window.electronAPI.onUpdateNotAvailable(() => {
+    // Reset button
+    if (checkBtnText) checkBtnText.textContent = 'Check for Updates';
+    if (checkBtn) checkBtn.disabled = false;
+    // Show "up to date" toast
+    if (toast) {
+      toast.style.display = 'flex';
+      toast.classList.remove('toast-out');
+      toast.classList.add('toast-in');
+      setTimeout(() => {
+        toast.classList.remove('toast-in');
+        toast.classList.add('toast-out');
+        setTimeout(() => { toast.style.display = 'none'; }, 400);
+      }, 3000);
+    }
+  });
+
+  // Settings button: Check for Updates
+  if (checkBtn) {
+    checkBtn.addEventListener('click', () => {
+      checkBtnText.textContent = 'Checking…';
+      checkBtn.disabled = true;
+      window.electronAPI.checkForUpdates();
+    });
+  }
+
+  installBtn.addEventListener('click', () => {
+    actions.style.display = 'none';
+    progressWrap.style.display = 'flex';
+    progressText.textContent = 'Starting…';
+    window.electronAPI.downloadUpdate();
+  });
+
+  skipBtn.addEventListener('click', () => {
+    popup.classList.remove('slide-in');
+    popup.classList.add('slide-out');
+    setTimeout(() => { popup.style.display = 'none'; popup.classList.remove('slide-out'); }, 400);
+  });
+
+  window.electronAPI.onUpdateProgress((pct) => {
+    progressFill.style.width = pct + '%';
+    progressText.textContent = pct + '%';
+  });
+
+  window.electronAPI.onUpdateReady(() => {
+    progressWrap.style.display = 'none';
+    restartActions.style.display = 'flex';
+  });
+
+  restartBtn.addEventListener('click', () => {
+    window.electronAPI.installUpdate();
+  });
+})();

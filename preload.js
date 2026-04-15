@@ -44,4 +44,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bgDetectSubject: (params) => ipcRenderer.invoke('bg:detectSubject', params),
   bgApply: (params) => ipcRenderer.invoke('bg:apply', params),
   bgApplyWithRefine: (params) => ipcRenderer.invoke('bg:applyWithRefine', params),
+
+  // Auto-update
+  onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, ver) => cb(ver)),
+  onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (_e, pct) => cb(pct)),
+  onUpdateReady: (cb) => ipcRenderer.on('update:ready', () => cb()),
+  onUpdateNotAvailable: (cb) => ipcRenderer.on('update:not-available', () => cb()),
+  checkForUpdates: () => ipcRenderer.send('update:check'),
+  downloadUpdate: () => ipcRenderer.send('update:download'),
+  installUpdate: () => ipcRenderer.send('update:install'),
 });
