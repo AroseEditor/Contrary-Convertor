@@ -995,11 +995,59 @@ async function convertImage(input, output, format, options, emit) {
     avif: () => pipe.avif(preset.avifLossless ? { lossless: true } : { quality }).toFile(output),
     gif:  () => pipe.gif({ colors: preset.gifColors, dither: 1.0 }).toFile(output),
     tiff: () => pipe.tiff(preset.jpegQ >= 90 ? { compression: 'lzw' } : { quality, compression: 'jpeg' }).toFile(output),
-    bmp:  () => pipe.bmp().toFile(output),
+    bmp:  async () => {
+      // Sharp doesn't support BMP output — convert to raw RGBA then write a proper BMP
+      const meta = await sharp(input).metadata();
+      const resized = w || h ? pipe.resize(w, h, { fit: 'inside', withoutEnlargement: true }) : pipe;
+      const { data, info } = await resized.removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      const width = info.width, height = info.height, channels = info.channels;
+      const rowBytes = width * channels;
+      const paddedRowBytes = Math.ceil(rowBytes / 4) * 4;
+      const pixelDataSize = paddedRowBytes * height;
+      const fileSize = 54 + pixelDataSize;
+      const buf = Buffer.alloc(fileSize);
+      // BMP file header
+      buf.write('BM', 0);
+      buf.writeUInt32LE(fileSize, 2);
+      buf.writeUInt32LE(54, 10); // pixel data offset
+      // DIB header (BITMAPINFOHEADER)
+      buf.writeUInt32LE(40, 14);
+      buf.writeInt32LE(width, 18);
+      buf.writeInt32LE(height, 22); // positive = bottom-up
+      buf.writeUInt16LE(1, 26); // color planes
+      buf.writeUInt16LE(channels * 8, 28); // bits per pixel
+      buf.writeUInt32LE(0, 30); // no compression
+      buf.writeUInt32LE(pixelDataSize, 34);
+      buf.writeInt32LE(2835, 38); // h resolution (72 DPI)
+      buf.writeInt32LE(2835, 42); // v resolution
+      // Pixel data (BMP stores bottom-up, BGR order)
+      for (let y = 0; y < height; y++) {
+        const srcRow = (height - 1 - y) * rowBytes;
+        const dstRow = 54 + y * paddedRowBytes;
+        for (let x = 0; x < width; x++) {
+          const srcOff = srcRow + x * channels;
+          const dstOff = dstRow + x * channels;
+          buf[dstOff]     = data[srcOff + 2]; // B
+          buf[dstOff + 1] = data[srcOff + 1]; // G
+          buf[dstOff + 2] = data[srcOff];     // R
+        }
+      }
+      fs.writeFileSync(output, buf);
+    },
     ico:  async () => {
-      const tmp = output + '.tmp.png';
-      await pipe.resize(256, 256, { fit: 'contain', background: { r:0,g:0,b:0,alpha:0 } }).png().toFile(tmp);
-      fs.renameSync(tmp, output);
+      // Create proper multi-size ICO using png-to-ico (ESM module)
+      const { default: pngToIco } = await import('png-to-ico');
+      const sizes = [16, 32, 48, 256];
+      const pngBuffers = [];
+      for (const sz of sizes) {
+        const pngBuf = await sharp(input)
+          .resize(sz, sz, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+          .png()
+          .toBuffer();
+        pngBuffers.push(pngBuf);
+      }
+      const icoBuf = await pngToIco(pngBuffers);
+      fs.writeFileSync(output, icoBuf);
     },
   };
 
@@ -1806,6 +1854,7 @@ async function convertFont(input, output, format, options, emit) {
   emit(10, 'Loading font…');
 
   const font = opentype.loadSync(input);
+  const ext = path.extname(input).toLowerCase().slice(1);
   emit(40, 'Processing font…');
 
   if (format === 'extract-text') {
@@ -1823,17 +1872,15 @@ async function convertFont(input, output, format, options, emit) {
       `Descender: ${font.descender}`,
     ];
     fs.writeFileSync(output, info.join('\n'), 'utf-8');
+  } else if ((ext === 'ttf' && format === 'otf') || (ext === 'otf' && format === 'ttf')) {
+    // opentype.js rebuilds the font tables from parsed glyph data
+    // It outputs TrueType-flavored OpenType regardless of source
+    // This is a proper re-serialization (not a file copy)
+    emit(60, `Rebuilding as ${format.toUpperCase()}…`);
+    const buf = Buffer.from(font.toArrayBuffer());
+    fs.writeFileSync(output, buf);
   } else {
-    // Convert between TTF/OTF
-    // opentype.js can write OTF (CFF-based) or TTF
-    emit(60, `Writing ${format.toUpperCase()}…`);
-    const buf = font.download ? null : font.toArrayBuffer();
-    if (buf) {
-      fs.writeFileSync(output, Buffer.from(buf));
-    } else {
-      // Simple copy with extension change (opentype.js outputs the same binary)
-      fs.copyFileSync(input, output);
-    }
+    throw new Error(`Font conversion from ${ext} to ${format} is not supported.`);
   }
   emit(90, 'Finalizing…');
 }
