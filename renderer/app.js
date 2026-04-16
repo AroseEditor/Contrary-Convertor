@@ -221,7 +221,9 @@ async function startDownload() {
   });
 
   try {
-    const result = await window.electronAPI.downloadUrl({ url, savePath, threads: state.threads, quality: state.ytdlpQuality });
+    const dlFormat = $('download-format')?.value || 'mp4';
+    const quality = dlFormat === 'mp3' ? 'audio' : state.ytdlpQuality;
+    const result = await window.electronAPI.downloadUrl({ url, savePath, threads: state.threads, quality });
     if (result.error) {
       dlProgressLabel.textContent = '... ' + result.error.slice(0, 80);
       dlSpeed.textContent = 'Error';

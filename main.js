@@ -1089,10 +1089,9 @@ async function convertVideo(input, output, format, options, emit) {
     const encPreset = crf === 0 ? 'ultrafast' : (crf <= 16 ? 'slow' : 'medium');
 
     if (format === 'mp3') {
-      // Extract audio at highest quality
+      // Extract audio at highest quality (VBR mode, quality 0 = best)
       cmd = cmd.noVideo()
         .audioCodec('libmp3lame')
-        .audioBitrate('320k')
         .outputOptions(['-q:a', '0']);
 
     } else if (format === 'gif') {
@@ -1480,77 +1479,117 @@ async function extractText(input, outputDir, ext, emit, options = {}) {
     const ocrImages = options.ocrImages || false;
     const dividePages = options.dividePages || false;
 
-    // Step 1: Extract native text page-by-page via pdf-parse
-    const pageTexts = [];
+    let fullText = '';
+    let pageTexts = [];
+
     try {
       const pdfParse = r('pdf-parse');
-      await pdfParse(buf, {
-        pagerender: async (pageData) => {
-          try {
-            const textContent = await pageData.getTextContent();
-            let lastY = null, text = '';
-            for (const item of textContent.items) {
-              if (lastY !== null && lastY !== item.transform[5]) text += '\n';
-              text += item.str;
-              lastY = item.transform[5];
+
+      if (dividePages) {
+        // Page-by-page extraction
+        const collected = [];
+        await pdfParse(buf, {
+          pagerender: async (pageData) => {
+            try {
+              const tc = await pageData.getTextContent();
+              let lastY = null, txt = '';
+              for (const item of tc.items) {
+                if (lastY !== null && lastY !== item.transform[5]) txt += '\n';
+                txt += item.str;
+                lastY = item.transform[5];
+              }
+              collected.push(txt.trim());
+            } catch {
+              collected.push('');
             }
-            pageTexts.push(text.trim());
-          } catch {
-            pageTexts.push('');
+            return '';
           }
-          return '';
-        }
-      });
-    } catch {
-      // pdf-parse failed entirely
+        });
+        pageTexts = collected;
+      } else {
+        // Simple full-text extraction (most reliable)
+        const parsed = await pdfParse(buf);
+        fullText = (parsed.text || '').trim();
+      }
+    } catch (e) {
+      emit(30, 'pdf-parse failed, trying fallback…');
+      // Fallback: try reading with pdf-lib to at least get page count
+      try {
+        const { PDFDocument } = r('pdf-lib');
+        const doc = await PDFDocument.load(buf);
+        fullText = `(Could not extract text from this PDF — ${doc.getPageCount()} pages)\nError: ${e.message}`;
+      } catch {
+        fullText = `(PDF text extraction failed: ${e.message})`;
+      }
     }
     emit(50, 'Text extracted from PDF');
 
-    // Step 2: If OCR is enabled, OCR pages that have no/little native text
+    // Step 2: If OCR is enabled and no/little text was found
     if (ocrImages) {
-      emit(55, 'Running OCR on image pages…');
-      try {
-        const puppeteer = r('puppeteer');
-        const Tesseract = r('tesseract.js');
-        const tmpDir = path.join(outputDir, `_ocr_tmp_${Date.now()}`);
-        fs.mkdirSync(tmpDir, { recursive: true });
+      const hasEnoughText = dividePages
+        ? pageTexts.some(t => t.replace(/\s/g, '').length >= 10)
+        : fullText.replace(/\s/g, '').length >= 20;
 
-        const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
-        const page = await browser.newPage();
-        await page.setViewport({ width: 1200, height: 1600 });
-        const fileUrl = `file:///${input.replace(/\\/g, '/')}`;
+      if (!hasEnoughText) {
+        emit(55, 'Running OCR on image pages…');
+        try {
+          const puppeteer = r('puppeteer');
+          const Tesseract = r('tesseract.js');
+          const tmpDir = path.join(outputDir, `_ocr_tmp_${Date.now()}`);
+          fs.mkdirSync(tmpDir, { recursive: true });
 
-        for (let i = 0; i < pageTexts.length; i++) {
-          const hasText = pageTexts[i].replace(/\s/g, '').length >= 10;
-          if (!hasText) {
-            emit(55 + Math.round((i / pageTexts.length) * 30), `OCR page ${i + 1}/${pageTexts.length}…`);
+          const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
+          const page = await browser.newPage();
+          await page.setViewport({ width: 1200, height: 1600 });
+          const fileUrl = `file:///${input.replace(/\\/g, '/')}`;
+
+          // Get page count
+          await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+          let totalPages = 1;
+          try {
+            totalPages = await page.evaluate(() => {
+              if (window.PDFViewerApplication && window.PDFViewerApplication.pagesCount) return window.PDFViewerApplication.pagesCount;
+              return document.querySelectorAll('.page').length || 1;
+            });
+          } catch {}
+
+          const ocrTexts = [];
+          for (let i = 1; i <= totalPages; i++) {
+            emit(55 + Math.round((i / totalPages) * 30), `OCR page ${i}/${totalPages}…`);
             try {
-              await page.goto(`${fileUrl}#page=${i + 1}`, { waitUntil: 'networkidle0', timeout: 15000 });
-              await new Promise(r => setTimeout(r, 800));
-              const imgPath = path.join(tmpDir, `page_${i + 1}.png`);
+              await page.goto(`${fileUrl}#page=${i}`, { waitUntil: 'networkidle0', timeout: 15000 });
+              await new Promise(resolve => setTimeout(resolve, 800));
+              const imgPath = path.join(tmpDir, `page_${i}.png`);
               await page.screenshot({ path: imgPath, fullPage: false });
               const { data: { text } } = await Tesseract.recognize(imgPath, 'eng');
-              if (text.trim().length > 0) pageTexts[i] = text.trim();
-            } catch {}
+              ocrTexts.push(text.trim());
+            } catch {
+              ocrTexts.push('');
+            }
           }
-        }
 
-        await browser.close();
-        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-      } catch {}
+          await browser.close();
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+          if (dividePages) {
+            pageTexts = ocrTexts;
+          } else {
+            fullText = ocrTexts.filter(t => t).join('\n\n').trim();
+          }
+        } catch {}
+      }
     }
 
     // Step 3: Write output
     emit(88, 'Writing output…');
     if (dividePages) {
-      let output = '';
+      let out = '';
       for (let i = 0; i < pageTexts.length; i++) {
-        output += `==Page ${i + 1}==\n${pageTexts[i] || '(empty)'}\n\n`;
+        out += `==Page ${i + 1}==\n${pageTexts[i] || '(empty)'}\n\n`;
       }
-      fs.writeFileSync(outputFile, output.trim(), 'utf-8');
+      fs.writeFileSync(outputFile, out.trim(), 'utf-8');
     } else {
-      const allText = pageTexts.filter(t => t).join('\n\n').trim();
-      fs.writeFileSync(outputFile, allText || '(no text found in this PDF)', 'utf-8');
+      fs.writeFileSync(outputFile, fullText || '(no text found in this PDF)', 'utf-8');
     }
     emit(92, 'Done');
   }
