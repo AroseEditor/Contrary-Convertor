@@ -10,12 +10,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // File dialog
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
+  openFilesDialog: () => ipcRenderer.invoke('dialog:openFiles'),
 
   // File detection (includes probe data for video/audio)
   detectFile: (filePath) => ipcRenderer.invoke('file:detect', filePath),
 
   // Conversion
   convertFile: (params) => ipcRenderer.invoke('file:convert', params),
+  bulkConvert: (params) => ipcRenderer.invoke('file:bulkConvert', params),
+
+  // Clipboard
+  clipboardSaveFile: (params) => ipcRenderer.invoke('clipboard:saveFile', params),
 
   // Progress / error events
   onProgress: (cb) => ipcRenderer.on('convert:progress', (_e, d) => cb(d)),

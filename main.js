@@ -259,6 +259,91 @@ ipcMain.handle('dialog:openFile', async () => {
   return result.filePaths[0];
 });
 
+// Multi-file dialog for bulk operations
+ipcMain.handle('dialog:openFiles', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'All Files', extensions: ['*'] }],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths;
+});
+
+// Save clipboard image to temp file and return the path
+ipcMain.handle('clipboard:saveFile', async (_event, { base64, mimeType }) => {
+  try {
+    const os = require('os');
+    const extMap = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/bmp': 'bmp' };
+    const ext = extMap[mimeType] || 'png';
+    const tmpPath = path.join(os.tmpdir(), `clipboard_paste_${Date.now()}.${ext}`);
+    fs.writeFileSync(tmpPath, Buffer.from(base64, 'base64'));
+    return tmpPath;
+  } catch (err) {
+    return null;
+  }
+});
+
+// Bulk convert: process multiple files with same format
+ipcMain.handle('file:bulkConvert', async (event, { filePaths, outputFormat, options }) => {
+  const results = [];
+  const emit = (pct, msg) => event.sender.send('convert:progress', { percent: pct, message: msg });
+  for (let i = 0; i < filePaths.length; i++) {
+    const filePath = filePaths[i];
+    const fileName = path.basename(filePath);
+    emit(Math.round((i / filePaths.length) * 100), `Processing ${i + 1}/${filePaths.length}: ${fileName}`);
+    try {
+      const ext = path.extname(filePath).toLowerCase().slice(1);
+      const dir = path.dirname(filePath);
+      const base = path.basename(filePath, path.extname(filePath));
+      const isFix = outputFormat === 'fix';
+      const isExtract = outputFormat.startsWith('extract');
+      let outputPath;
+      if (isFix) {
+        outputPath = path.join(dir, `${base}_fixed.mp4`);
+      } else if (isExtract) {
+        outputPath = path.join(dir, `${base}_${outputFormat.replace('-','_')}`);
+        fs.mkdirSync(outputPath, { recursive: true });
+      } else {
+        outputPath = path.join(dir, `${base}_converted.${outputFormat}`);
+      }
+      const subEmit = (pct, msg) => {
+        const overallPct = Math.round((i / filePaths.length) * 100 + (pct / filePaths.length));
+        emit(overallPct, `[${i+1}/${filePaths.length}] ${msg}`);
+      };
+      if (isFix) {
+        await fixForPlatform(filePath, outputPath, options, subEmit);
+      } else if (outputFormat === 'extract-text') {
+        await extractText(filePath, outputPath, ext, subEmit, options);
+      } else if (outputFormat === 'extract-images') {
+        if (ext === 'pdf') await extractPdfImages(filePath, outputPath, subEmit);
+        else if (['docx','doc','odt'].includes(ext)) await extractDocxImages(filePath, outputPath, ext, subEmit);
+        else throw new Error('Image extraction not supported for this file type.');
+      } else {
+        const category = detectCategory(ext);
+        switch (category) {
+          case 'image': await convertImage(filePath, outputPath, outputFormat, options, subEmit); break;
+          case 'video': await convertVideo(filePath, outputPath, outputFormat, options, subEmit); break;
+          case 'audio': await convertAudio(filePath, outputPath, outputFormat, options, subEmit); break;
+          case 'document': await convertDocument(filePath, outputPath, outputFormat, options, subEmit); break;
+          case 'data': case 'config': case 'spreadsheet': await convertData(filePath, outputPath, outputFormat, options, subEmit); break;
+          case 'archive': await convertArchive(filePath, outputPath, outputFormat, options, subEmit); break;
+          case 'web': case 'text': await convertWeb(filePath, outputPath, outputFormat, options, subEmit); break;
+          case 'font': await convertFont(filePath, outputPath, outputFormat, options, subEmit); break;
+          case '3d': await convert3D(filePath, outputPath, outputFormat, ext, subEmit); break;
+          default: throw new Error(`Unsupported: ${category}`);
+        }
+      }
+      let outputSize = 0;
+      try { const st = fs.statSync(outputPath); outputSize = st.isDirectory() ? getDirSize(outputPath) : st.size; } catch {}
+      results.push({ success: true, inputName: fileName, outputPath, outputSize });
+    } catch (err) {
+      results.push({ success: false, inputName: fileName, error: err.message });
+    }
+  }
+  emit(100, `Done! ${results.filter(r => r.success).length}/${filePaths.length} converted`);
+  return results;
+});
+
 // ─── Shell actions ────────────────────────────────────────────────────────────
 ipcMain.handle('shell:open',       async (_e, p) => await shell.openPath(p));
 ipcMain.handle('shell:showFolder', async (_e, p) => shell.showItemInFolder(p));
@@ -702,7 +787,7 @@ function getMimeFromExt(ext) {
 function getOutputFormats(category, ext) {
   const fmt = {
     image:        ['jpg','png','webp','avif','gif','tiff','bmp','ico','remove-bg'],
-    video:        ['mp4','webm','mov','avi','mkv','gif','mp3'],
+    video:        ['mp4','webm','mov','avi','mkv','gif','mp3','wav','ogg','flac','aac','opus'],
     audio:        ['mp3','wav','ogg','flac','aac','opus'],
     document:     { pdf:['html','extract-text','extract-images','extract-fonts'], docx:['pdf','html','txt','extract-text','extract-images'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text','extract-images'] },
     data:         ['json','csv','xml','yaml','toml','env'],
@@ -1101,11 +1186,21 @@ async function convertVideo(input, output, format, options, emit) {
     // Pad to even dimensions for H.264 (required)
     const padEven = '-vf pad=ceil(iw/2)*2:ceil(ih/2)*2';
 
-    if (format === 'mp3') {
-      cmd = cmd.noVideo()
-        .audioCodec('libmp3lame')
-        .outputOptions(['-q:a', '0'])
-        .format('mp3');
+    // Audio extraction from video
+    const AUDIO_FORMATS = new Set(['mp3','wav','ogg','flac','aac','opus']);
+    if (AUDIO_FORMATS.has(format)) {
+      const audioCodecMap = {
+        mp3:  { codec: 'libmp3lame', extra: ['-q:a', '0'] },
+        wav:  { codec: 'pcm_s24le', extra: [] },
+        ogg:  { codec: 'libvorbis', extra: ['-q:a', '10'] },
+        flac: { codec: 'flac', extra: [] },
+        aac:  { codec: 'aac', extra: ['-b:a', '320k'] },
+        opus: { codec: 'libopus', extra: ['-b:a', '320k'] },
+      };
+      const ac = audioCodecMap[format];
+      cmd = cmd.noVideo().audioCodec(ac.codec);
+      if (ac.extra.length) cmd = cmd.outputOptions(ac.extra);
+      cmd = cmd.format(format === 'ogg' ? 'ogg' : format);
 
     } else if (format === 'gif') {
       const fps   = userFps || 24;

@@ -10,6 +10,7 @@ const state = {
   threads: 4,
   ytdlpQuality: '1080',
   history: [],
+  bulkFiles: [],  // array of file info objects for bulk mode
 };
 
 // --------------------------- DOM ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -267,14 +268,62 @@ dropzone.addEventListener('dragleave', (e) => { if (!dropzone.contains(e.related
 dropzone.addEventListener('drop', (e) => {
   e.preventDefault();
   dropzone.classList.remove('drag-over');
-  if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0].path);
+  const files = [...e.dataTransfer.files];
+  if (files.length > 1) {
+    enterBulkMode(files.map(f => f.path));
+  } else if (files.length === 1) {
+    loadFile(files[0].path);
+  }
 });
 
 // Click / keyboard browse
 dropzone.addEventListener('click', async () => { if (!state.converting) { const p = await window.electronAPI.openFileDialog(); if (p) loadFile(p); } });
 dropzone.addEventListener('keydown', async (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const p = await window.electronAPI.openFileDialog(); if (p) loadFile(p); } });
 
+// Right-click for bulk file selection
+dropzone.addEventListener('contextmenu', async (e) => {
+  e.preventDefault();
+  if (state.converting) return;
+  const paths = await window.electronAPI.openFilesDialog();
+  if (paths && paths.length > 1) {
+    enterBulkMode(paths);
+  } else if (paths && paths.length === 1) {
+    loadFile(paths[0]);
+  }
+});
+
 fileClearBtn.addEventListener('click', (e) => { e.stopPropagation(); resetUI(); });
+
+// --------------------------- Clipboard paste --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+document.addEventListener('paste', async (e) => {
+  if (state.converting || state.downloadMode) return;
+  // Check for files in clipboard
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.kind === 'file') {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (!file) continue;
+      // For files pasted from explorer (have a path)
+      if (file.path) {
+        loadFile(file.path);
+        return;
+      }
+      // For images copied to clipboard (screenshots, copied images)
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64 = reader.result.split(',')[1];
+          const tmpPath = await window.electronAPI.clipboardSaveFile({ base64, mimeType: file.type });
+          if (tmpPath) loadFile(tmpPath);
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
+  }
+});
 
 // --------------------------- Load / detect file ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 async function loadFile(filePath) {
@@ -548,6 +597,7 @@ if (qualitySlider) {
 
 // --------------------------- Convert ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 convertBtn.addEventListener('click', async () => {
+  if (state.bulkFiles.length > 1) return; // bulk handler takes over
   if (!state.currentFile || !state.selectedFormat || state.converting) return;
   state.converting = true;
   updateConvertBtn();
@@ -618,6 +668,111 @@ function gatherOptions() {
   return o;
 }
 
+// --------------------------- Bulk mode -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+async function enterBulkMode(filePaths) {
+  resetUI(false);
+  state.bulkFiles = [];
+
+  // Detect all files
+  const detected = [];
+  for (const fp of filePaths) {
+    try {
+      const info = await window.electronAPI.detectFile(fp);
+      if (!info.error) detected.push(info);
+    } catch {}
+  }
+  if (!detected.length) { showError('No valid files detected'); return; }
+
+  state.bulkFiles = detected;
+  // Use first file as reference for format dropdown
+  state.currentFile = detected[0];
+
+  // Render bulk file info
+  fileTypeBadge.textContent = 'BULK';
+  fileNameEl.textContent = `${detected.length} files selected`;
+
+  // Count categories
+  const cats = {};
+  detected.forEach(f => { cats[f.category] = (cats[f.category] || 0) + 1; });
+  const catSummary = Object.entries(cats).map(([c, n]) => `${n} ${c}`).join(', ');
+  fileDetailsEl.textContent = catSummary;
+  dropzone.classList.add('file-loaded');
+  sourceMeta.style.display = 'none';
+
+  // Find common output formats (intersection of all files' formats)
+  let commonFormats = [...(detected[0].outputFormats || [])];
+  for (let i = 1; i < detected.length; i++) {
+    const fmts = new Set(detected[i].outputFormats || []);
+    commonFormats = commonFormats.filter(f => fmts.has(f));
+  }
+  // If no common formats, use first file's formats
+  if (!commonFormats.length) commonFormats = detected[0].outputFormats || [];
+
+  // Override the info with common formats for dropdown
+  const bulkInfo = { ...detected[0], outputFormats: commonFormats, name: `${detected.length} files` };
+  populateDropdown(bulkInfo);
+
+  show(fileInfoSection); show(formatSection); show(convertSection);
+  updateConvertBtn();
+}
+
+// Override convert button to handle bulk mode
+const _origConvertClick = convertBtn.onclick;
+convertBtn.addEventListener('click', async () => {
+  // Only intercept if bulk mode
+  if (!state.bulkFiles.length || !state.selectedFormat || state.converting) return;
+
+  // Prevent double-fire: the original click handler checks state.currentFile
+  // In bulk mode we handle it here
+  if (state.bulkFiles.length <= 1) return; // let single-file handler take over
+
+  state.converting = true;
+  updateConvertBtn();
+  show(progressSection);
+  setProgress(0, 'Starting bulk conversion...');
+
+  const options = gatherOptions();
+  const filePaths = state.bulkFiles.map(f => f.path);
+
+  window.electronAPI.onProgress(({ percent, message }) => setProgress(percent, message));
+
+  try {
+    const results = await window.electronAPI.bulkConvert({
+      filePaths,
+      outputFormat: state.selectedFormat,
+      options,
+    });
+
+    const successes = results.filter(r => r.success);
+    const failures = results.filter(r => !r.success);
+
+    setProgress(100, `Done! ${successes.length}/${results.length} converted`);
+    flashSuccess();
+
+    // Add each result to history
+    for (const r of results) {
+      if (r.success) {
+        const outName = r.outputPath.split(/[\\/]/).pop();
+        addHistory({ status: 'success', inputName: r.inputName, outputName: outName, outputPath: r.outputPath, sizeBefore: 0, sizeAfter: r.outputSize });
+      } else {
+        addHistory({ status: 'error', error: r.error, inputName: r.inputName, outputName: '...' });
+      }
+    }
+
+    if (failures.length) {
+      setTimeout(() => showError(`${failures.length} file(s) failed`), 1000);
+    }
+    setTimeout(() => hide(progressSection), 3000);
+  } catch (err) {
+    showError(err.message);
+  }
+
+  state.converting = false;
+  state.bulkFiles = [];
+  updateConvertBtn();
+  window.electronAPI.removeProgressListener();
+}, true); // useCapture to fire before the original handler
+
 // --------------------------- History ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 function addHistory(item) {
   state.history.unshift(item);
@@ -671,7 +826,7 @@ function updateConvertBtn() {
 }
 
 function resetUI(clearFile = true) {
-  if (clearFile) { state.currentFile = null; state.selectedFormat = null; }
+  if (clearFile) { state.currentFile = null; state.selectedFormat = null; state.bulkFiles = []; }
   state.converting = false;
   dropzone.classList.remove('drag-over','file-loaded','success-flash');
   hide(fileInfoSection); hide(formatSection); hide(optionsSection); hide(progressSection);

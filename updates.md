@@ -1,5 +1,31 @@
 # Contrary Convertor — Updates
 
+## v1.5.0 (April 28, 2026)
+
+### 📋 Clipboard Paste Support
+- **Ctrl+V** to paste files directly into the app
+- Works with copied files from Explorer and screenshots/images from clipboard
+- Clipboard images are saved to temp dir and loaded automatically
+
+### 📦 Bulk Operations
+- **Drop multiple files** at once for batch conversion
+- **Right-click** the dropzone to open multi-file selection dialog
+- All files are processed sequentially with per-file progress reporting
+- Common output formats are computed from the intersection of all files' supported formats
+- Each result (success/failure) is individually tracked in history
+
+### 🎵 Video → Audio Extraction
+- Videos can now be converted to **WAV, OGG, FLAC, AAC, OPUS** (not just MP3)
+- Full codec support: pcm_s24le for WAV, libvorbis for OGG, flac for FLAC, aac for AAC, libopus for OPUS
+- Proper format containers for each audio type
+
+### 🔍 OCR for Images
+- Already built-in via **extract-text** format for images
+- Uses **Tesseract.js** for OCR on JPG, PNG, WebP, BMP, TIFF, GIF, AVIF
+- Real-time OCR progress reporting
+
+---
+
 ## v1.4.0 (April 28, 2026)
 
 ### 🔧 PDF Text Extraction — Complete Rewrite
