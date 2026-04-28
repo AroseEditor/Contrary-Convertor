@@ -1,6 +1,36 @@
+# Contrary Convertor — Updates
+
+## v1.4.0 (April 28, 2026)
+
+### 🔧 PDF Text Extraction — Complete Rewrite
+- **All text is now extracted** from PDFs using page-by-page `getTextContent()` via pdfjs
+- **Image placeholders**: Where images exist in the PDF, `[Insert Image Here]` is inserted in the output
+- Image detection uses the PDF operator list (paintImageXObject/paintJpegXObject ops)
+- Removed OCR dependency — pure text extraction, no Tesseract needed
+- Added **pdf-lib fallback** parser that reads raw PDF content streams (Tj/TJ operators) if pdf-parse fails
+- Works on all PDFs including encrypted/complex layouts
+
+### 🎬 Video Conversion — Fixed
+- Added explicit `.format()` calls for every output container (mp4, mkv, mov, webm, avi, gif, mp3)
+- Added **FLV** and **WMV** output format support
+- Added `-y` overwrite flag to prevent ffmpeg hanging on existing files
+- Added `-pix_fmt yuv420p` and even-dimension padding for H.264 compatibility
+- Added `-movflags +faststart` for MP4 web streaming
+- Better error messages on ffmpeg failures
+- Added fallback encoder path for unknown formats
+
+### 🖼️ Image Conversion — Hardened
+- Added `failOnError: false` to sharp — handles truncated/broken images gracefully
+- Added auto EXIF rotation via `.rotate()` — images no longer appear rotated after conversion
+
+### 🎵 Audio Conversion — Fixed
+- Added `-y` overwrite flag to prevent ffmpeg hanging
+
+---
+
 # Contrary Convertor — Updates (April 13, 2026)
 
-## 🎨 UI Overhaul — Hacker Theme
+## 🎨 UI Overhaul
 - Complete redesign with **red + black gradient** aesthetic
 - **CRT scanline overlay** with animated scroll effect
 - **Glitch animation** on logo text

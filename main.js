@@ -944,6 +944,7 @@ async function fixForPlatform(input, output, options, emit) {
       .videoCodec('libx264')
       .audioCodec('aac')
       .outputOptions([
+        '-y',
         '-pix_fmt',   'yuv420p',
         '-profile:v', spec.profile,
         '-level:v',   spec.level,
@@ -974,7 +975,9 @@ async function convertImage(input, output, format, options, emit) {
   const sharp = r('sharp');
   emit(10, 'Loading image…');
 
-  let pipe = sharp(input);
+  // failOnError: false lets sharp handle truncated/broken images gracefully
+  // rotate() auto-applies EXIF orientation then strips the tag
+  let pipe = sharp(input, { failOnError: false }).rotate();
 
   // Resize only if explicitly requested
   const w = options.width  ? parseInt(options.width)  : null;
@@ -1081,18 +1084,28 @@ async function convertVideo(input, output, format, options, emit) {
     const userFps   = options.framerate ? parseFloat(options.framerate) : null;
     const resizeReq = !!(userW || userH || userFps);
 
-    let cmd = ffmpeg(input);
+    let cmd = ffmpeg(input).outputOptions(['-y']);
 
     // Resolve CRF from quality preset before if-else chain
     const vPreset = QUALITY_PRESETS[options.qualityPreset] || QUALITY_PRESETS.lossless;
     const crf     = vPreset.videoCrf;
     const encPreset = crf === 0 ? 'ultrafast' : (crf <= 16 ? 'slow' : 'medium');
 
+    // Helper: apply optional resize + fps
+    const applyResize = (c) => {
+      if (userW || userH) c = c.size(userW && userH ? `${userW}x${userH}` : (userW ? `${userW}x?` : `?x${userH}`));
+      if (userFps) c = c.fps(userFps);
+      return c;
+    };
+
+    // Pad to even dimensions for H.264 (required)
+    const padEven = '-vf pad=ceil(iw/2)*2:ceil(ih/2)*2';
+
     if (format === 'mp3') {
-      // Extract audio at highest quality (VBR mode, quality 0 = best)
       cmd = cmd.noVideo()
         .audioCodec('libmp3lame')
-        .outputOptions(['-q:a', '0']);
+        .outputOptions(['-q:a', '0'])
+        .format('mp3');
 
     } else if (format === 'gif') {
       const fps   = userFps || 24;
@@ -1102,15 +1115,29 @@ async function convertVideo(input, output, format, options, emit) {
         .format('gif');
 
     } else if (canCopy && !resizeReq && crf === 0) {
-      // Pure container remux — zero re-encoding, truly lossless
-      cmd = cmd.outputOptions(['-c', 'copy']);
+      cmd = cmd.outputOptions(['-c', 'copy'])
+        .format(format === 'm4v' ? 'mp4' : format);
 
-    } else if (format === 'mp4' || format === 'mkv' || format === 'mov') {
+    } else if (format === 'mp4') {
       cmd = cmd.videoCodec('libx264')
         .audioCodec('aac')
-        .outputOptions(['-crf', String(crf), '-preset', encPreset]);
-      if (userW || userH) cmd = cmd.size(userW && userH ? `${userW}x${userH}` : (userW ? `${userW}x?` : `?x${userH}`));
-      if (userFps) cmd = cmd.fps(userFps);
+        .outputOptions(['-crf', String(crf), '-preset', encPreset, '-pix_fmt', 'yuv420p', padEven, '-movflags', '+faststart'])
+        .format('mp4');
+      cmd = applyResize(cmd);
+
+    } else if (format === 'mkv') {
+      cmd = cmd.videoCodec('libx264')
+        .audioCodec('aac')
+        .outputOptions(['-crf', String(crf), '-preset', encPreset, padEven])
+        .format('matroska');
+      cmd = applyResize(cmd);
+
+    } else if (format === 'mov') {
+      cmd = cmd.videoCodec('libx264')
+        .audioCodec('aac')
+        .outputOptions(['-crf', String(crf), '-preset', encPreset, '-pix_fmt', 'yuv420p', padEven])
+        .format('mov');
+      cmd = applyResize(cmd);
 
     } else if (format === 'webm') {
       const webmOpts = crf === 0
@@ -1118,24 +1145,48 @@ async function convertVideo(input, output, format, options, emit) {
         : ['-b:v', '0', '-crf', String(crf)];
       cmd = cmd.videoCodec('libvpx-vp9')
         .audioCodec('libopus')
-        .outputOptions(webmOpts);
-      if (userW || userH) cmd = cmd.size(userW && userH ? `${userW}x${userH}` : (userW ? `${userW}x?` : `?x${userH}`));
-      if (userFps) cmd = cmd.fps(userFps);
+        .outputOptions(webmOpts)
+        .format('webm');
+      cmd = applyResize(cmd);
 
     } else if (format === 'avi') {
       cmd = cmd.videoCodec('libxvid')
         .audioCodec('libmp3lame')
-        .outputOptions(['-q:v', String(Math.max(1, Math.round(crf / 5))), '-q:a', '0']);
-      if (userW || userH) cmd = cmd.size(userW && userH ? `${userW}x${userH}` : (userW ? `${userW}x?` : `?x${userH}`));
-      if (userFps) cmd = cmd.fps(userFps);
+        .outputOptions(['-q:v', String(Math.max(1, Math.round(crf / 5))), '-q:a', '0'])
+        .format('avi');
+      cmd = applyResize(cmd);
+
+    } else if (format === 'flv') {
+      cmd = cmd.videoCodec('libx264')
+        .audioCodec('aac')
+        .outputOptions(['-crf', String(crf), '-preset', encPreset, padEven, '-ar', '44100'])
+        .format('flv');
+      cmd = applyResize(cmd);
+
+    } else if (format === 'wmv') {
+      cmd = cmd.videoCodec('wmv2')
+        .audioCodec('wmav2')
+        .outputOptions(['-q:v', String(Math.max(2, Math.round(crf / 3)))])
+        .format('asf');
+      cmd = applyResize(cmd);
+
+    } else {
+      // Fallback: let ffmpeg guess from extension
+      cmd = cmd.videoCodec('libx264').audioCodec('aac')
+        .outputOptions(['-crf', String(crf), '-preset', encPreset]);
+      cmd = applyResize(cmd);
     }
 
     cmd
-      .on('start', () => emit(10, 'Processing video…'))
+      .on('start', (cmdLine) => { emit(10, 'Processing video…'); })
       .on('progress', (info) => {
         if (info.percent) emit(Math.min(Math.round(info.percent), 95), `${Math.round(info.percent)}%`);
       })
-      .on('error', reject)
+      .on('error', (err) => {
+        // Provide more helpful error messages
+        const msg = err.message || String(err);
+        reject(new Error(msg.includes('ENOENT') ? 'ffmpeg binary not found' : msg.slice(0, 300)));
+      })
       .on('end', resolve)
       .save(output);
   });
@@ -1167,7 +1218,7 @@ async function convertAudio(input, output, format, options, emit) {
     const cfg = codecMap[format];
     if (!cfg) { reject(new Error(`Unsupported audio format: ${format}`)); return; }
 
-    let cmd = ffmpeg(input).audioCodec(cfg.codec).noVideo();
+    let cmd = ffmpeg(input).outputOptions(['-y']).audioCodec(cfg.codec).noVideo();
     if (cfg.bitrate) cmd = cmd.audioBitrate(cfg.bitrate);
     if (cfg.extra.length) cmd = cmd.outputOptions(cfg.extra);
 
@@ -1476,112 +1527,120 @@ async function extractText(input, outputDir, ext, emit, options = {}) {
   if (ext === 'pdf') {
     emit(20, 'Extracting PDF text…');
     const buf = fs.readFileSync(input);
-    const ocrImages = options.ocrImages || false;
     const dividePages = options.dividePages || false;
 
-    let fullText = '';
     let pageTexts = [];
 
     try {
       const pdfParse = r('pdf-parse');
 
-      if (dividePages) {
-        // Page-by-page extraction
-        const collected = [];
-        await pdfParse(buf, {
-          pagerender: async (pageData) => {
+      // Always use page-by-page extraction with image detection
+      const collected = [];
+      await pdfParse(buf, {
+        pagerender: async (pageData) => {
+          try {
+            // Extract text items with Y-position for line breaks
+            const tc = await pageData.getTextContent();
+            const items = tc.items || [];
+
+            // Detect images via operator list
+            let imageCount = 0;
             try {
-              const tc = await pageData.getTextContent();
-              let lastY = null, txt = '';
-              for (const item of tc.items) {
-                if (lastY !== null && lastY !== item.transform[5]) txt += '\n';
-                txt += item.str;
-                lastY = item.transform[5];
+              const ops = await pageData.getOperatorList();
+              // OPS.paintImageXObject = 85, OPS.paintJpegXObject = 82, OPS.paintImageMaskXObject = 83
+              const IMAGE_OPS = new Set([82, 83, 85]);
+              for (const fn of ops.fnArray) {
+                if (IMAGE_OPS.has(fn)) imageCount++;
               }
-              collected.push(txt.trim());
-            } catch {
-              collected.push('');
+            } catch {}
+
+            // Build text with proper line breaks
+            let lastY = null;
+            let txt = '';
+            for (const item of items) {
+              const y = item.transform ? item.transform[5] : null;
+              if (lastY !== null && y !== null && Math.abs(lastY - y) > 2) txt += '\n';
+              else if (lastY !== null && y !== null && item.str === '' && Math.abs(lastY - y) > 2) txt += '\n';
+              if (item.str) txt += item.str;
+              if (y !== null) lastY = y;
             }
-            return '';
+
+            // Append image placeholders at end of page content
+            if (imageCount > 0) {
+              for (let img = 0; img < imageCount; img++) {
+                txt += '\n[Insert Image Here]';
+              }
+            }
+
+            collected.push(txt.trim());
+          } catch {
+            collected.push('');
           }
-        });
-        pageTexts = collected;
-      } else {
-        // Simple full-text extraction (most reliable)
-        const parsed = await pdfParse(buf);
-        fullText = (parsed.text || '').trim();
-      }
+          return '';
+        }
+      });
+      pageTexts = collected;
+
     } catch (e) {
       emit(30, 'pdf-parse failed, trying fallback…');
-      // Fallback: try reading with pdf-lib to at least get page count
+      // Fallback: use pdf-lib to read raw page content streams for text
       try {
-        const { PDFDocument } = r('pdf-lib');
-        const doc = await PDFDocument.load(buf);
-        fullText = `(Could not extract text from this PDF — ${doc.getPageCount()} pages)\nError: ${e.message}`;
-      } catch {
-        fullText = `(PDF text extraction failed: ${e.message})`;
-      }
-    }
-    emit(50, 'Text extracted from PDF');
-
-    // Step 2: If OCR is enabled and no/little text was found
-    if (ocrImages) {
-      const hasEnoughText = dividePages
-        ? pageTexts.some(t => t.replace(/\s/g, '').length >= 10)
-        : fullText.replace(/\s/g, '').length >= 20;
-
-      if (!hasEnoughText) {
-        emit(55, 'Running OCR on image pages…');
-        try {
-          const puppeteer = r('puppeteer');
-          const Tesseract = r('tesseract.js');
-          const tmpDir = path.join(outputDir, `_ocr_tmp_${Date.now()}`);
-          fs.mkdirSync(tmpDir, { recursive: true });
-
-          const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] });
-          const page = await browser.newPage();
-          await page.setViewport({ width: 1200, height: 1600 });
-          const fileUrl = `file:///${input.replace(/\\/g, '/')}`;
-
-          // Get page count
-          await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-          let totalPages = 1;
+        const { PDFDocument, PDFName, PDFDict, PDFStream } = r('pdf-lib');
+        const doc = await PDFDocument.load(buf, { ignoreEncryption: true });
+        const pages = doc.getPages();
+        for (let i = 0; i < pages.length; i++) {
+          emit(30 + Math.round((i / pages.length) * 50), `Fallback: page ${i + 1}/${pages.length}…`);
           try {
-            totalPages = await page.evaluate(() => {
-              if (window.PDFViewerApplication && window.PDFViewerApplication.pagesCount) return window.PDFViewerApplication.pagesCount;
-              return document.querySelectorAll('.page').length || 1;
-            });
-          } catch {}
-
-          const ocrTexts = [];
-          for (let i = 1; i <= totalPages; i++) {
-            emit(55 + Math.round((i / totalPages) * 30), `OCR page ${i}/${totalPages}…`);
-            try {
-              await page.goto(`${fileUrl}#page=${i}`, { waitUntil: 'networkidle0', timeout: 15000 });
-              await new Promise(resolve => setTimeout(resolve, 800));
-              const imgPath = path.join(tmpDir, `page_${i}.png`);
-              await page.screenshot({ path: imgPath, fullPage: false });
-              const { data: { text } } = await Tesseract.recognize(imgPath, 'eng');
-              ocrTexts.push(text.trim());
-            } catch {
-              ocrTexts.push('');
+            const page = pages[i];
+            // Try to extract raw text operators from content stream
+            const contentStream = page.node.Contents();
+            if (contentStream) {
+              const rawBytes = contentStream.getContents ? contentStream.getContents() : null;
+              if (rawBytes) {
+                const raw = Buffer.from(rawBytes).toString('latin1');
+                // Extract text between parentheses in Tj/TJ operators
+                const textParts = [];
+                const tjRegex = /\(([^)]*)\)\s*Tj/g;
+                let match;
+                while ((match = tjRegex.exec(raw)) !== null) {
+                  textParts.push(match[1]);
+                }
+                // TJ array form: [(text)] TJ
+                const tjArrayRegex = /\[([^\]]*)\]\s*TJ/gi;
+                while ((match = tjArrayRegex.exec(raw)) !== null) {
+                  const inner = match[1];
+                  const subRegex = /\(([^)]*)\)/g;
+                  let sub;
+                  while ((sub = subRegex.exec(inner)) !== null) {
+                    textParts.push(sub[1]);
+                  }
+                }
+                // Detect image operators
+                const imgOps = (raw.match(/\bDo\b/g) || []).length;
+                let pageText = textParts.join(' ').trim();
+                if (imgOps > 0) {
+                  for (let img = 0; img < imgOps; img++) {
+                    pageText += '\n[Insert Image Here]';
+                  }
+                }
+                pageTexts.push(pageText);
+              } else {
+                pageTexts.push('');
+              }
+            } else {
+              pageTexts.push('');
             }
+          } catch {
+            pageTexts.push('');
           }
-
-          await browser.close();
-          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-
-          if (dividePages) {
-            pageTexts = ocrTexts;
-          } else {
-            fullText = ocrTexts.filter(t => t).join('\n\n').trim();
-          }
-        } catch {}
+        }
+      } catch (e2) {
+        pageTexts = [`(PDF text extraction failed: ${e.message}\nFallback also failed: ${e2.message})`];
       }
     }
+    emit(80, 'Writing output…');
 
-    // Step 3: Write output
-    emit(88, 'Writing output…');
+    // Write output
     if (dividePages) {
       let out = '';
       for (let i = 0; i < pageTexts.length; i++) {
@@ -1589,7 +1648,8 @@ async function extractText(input, outputDir, ext, emit, options = {}) {
       }
       fs.writeFileSync(outputFile, out.trim(), 'utf-8');
     } else {
-      fs.writeFileSync(outputFile, fullText || '(no text found in this PDF)', 'utf-8');
+      const combined = pageTexts.filter(t => t).join('\n\n').trim();
+      fs.writeFileSync(outputFile, combined || '(no text found in this PDF)', 'utf-8');
     }
     emit(92, 'Done');
   }
