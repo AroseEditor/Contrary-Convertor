@@ -21,6 +21,15 @@ async function rESM(name) {
   return await import(name);
 }
 
+// Resolve ffmpeg binary — swap asar path for asar.unpacked so the OS can spawn it
+function getFFmpegPath() {
+  let p = r('ffmpeg-static');
+  if (typeof p === 'string' && p.includes('app.asar')) {
+    p = p.replace('app.asar', 'app.asar.unpacked');
+  }
+  return p;
+}
+
 // ─── Main window ──────────────────────────────────────────────────────────────
 function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -821,7 +830,7 @@ function probeMedia(filePath) {
   return new Promise((resolve) => {
     try {
       const ffmpeg     = r('fluent-ffmpeg');
-      const ffmpegBin  = r('ffmpeg-static');
+      const ffmpegBin  = getFFmpegPath();
       ffmpeg.setFfmpegPath(ffmpegBin);
       ffmpeg.ffprobe(filePath, (err, meta) => {
         if (err) { resolve(null); return; }
@@ -1013,7 +1022,7 @@ async function fixForPlatform(input, output, options, emit) {
 
   return new Promise((resolve, reject) => {
     const ffmpeg    = r('fluent-ffmpeg');
-    const ffmpegBin = r('ffmpeg-static');
+    const ffmpegBin = getFFmpegPath();
     ffmpeg.setFfmpegPath(ffmpegBin);
 
     // Scale: cap to platform max, preserve aspect, ensure even dims for H.264
@@ -1155,7 +1164,7 @@ async function convertImage(input, output, format, options, emit) {
 async function convertVideo(input, output, format, options, emit) {
   return new Promise((resolve, reject) => {
     const ffmpeg    = r('fluent-ffmpeg');
-    const ffmpegBin = r('ffmpeg-static');
+    const ffmpegBin = getFFmpegPath();
     ffmpeg.setFfmpegPath(ffmpegBin);
     emit(5, 'Initialising ffmpeg…');
 
@@ -1293,7 +1302,7 @@ async function convertVideo(input, output, format, options, emit) {
 async function convertAudio(input, output, format, options, emit) {
   return new Promise((resolve, reject) => {
     const ffmpeg    = r('fluent-ffmpeg');
-    const ffmpegBin = r('ffmpeg-static');
+    const ffmpegBin = getFFmpegPath();
     ffmpeg.setFfmpegPath(ffmpegBin);
     emit(5, 'Initialising audio conversion…');
 
