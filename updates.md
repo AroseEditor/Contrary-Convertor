@@ -1,5 +1,15 @@
 # Contrary Convertor — Updates
 
+## v1.5.2 (April 30, 2026)
+
+### 🐛 Critical Fix — Conversion ENOENT crash
+- Fixed `spawn ffmpeg.exe ENOENT` error that broke all video, audio, and image conversions in packaged builds
+- Root cause: `ffmpeg-static` resolved to a path inside `app.asar`, but OS cannot spawn executables from asar archives
+- Added `getFFmpegPath()` helper that swaps `app.asar` → `app.asar.unpacked` for the ffmpeg binary path
+- All 4 ffmpeg consumers patched: probeMedia, fixForPlatform, convertVideo, convertAudio
+
+---
+
 ## v1.5.0 (April 28, 2026)
 
 ### 📋 Clipboard Paste Support
