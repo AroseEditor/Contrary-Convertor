@@ -331,6 +331,20 @@
           <p class="option-hint">Adds ==Page N== dividers between each page in the output text. For spreadsheets, divides by sheet name.</p>
         </div>
 
+        <!-- Watermark options -->
+        <div class="option-group" id="opt-watermark" style="display:none">
+          <div class="option-row">
+            <label class="option-label" for="opt-watermark-text">Watermark Text</label>
+            <input class="option-input" id="opt-watermark-text" type="text" placeholder="CONFIDENTIAL" value="" style="flex:1" />
+          </div>
+          <div class="option-row" style="margin-top:8px">
+            <label class="option-label" for="opt-watermark-opacity">Opacity</label>
+            <input type="range" id="opt-watermark-opacity" min="0" max="100" value="15" style="flex:1" />
+            <span class="quality-display" id="watermark-opacity-display">0.15</span>
+          </div>
+          <p class="option-hint">Stamps diagonal text across every page of the PDF. Lower opacity = more subtle.</p>
+        </div>
+
       </div>
     </section>
 

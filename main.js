@@ -798,7 +798,7 @@ function getOutputFormats(category, ext) {
     image:        ['jpg','png','webp','avif','gif','tiff','bmp','ico','remove-bg'],
     video:        ['mp4','webm','mov','avi','mkv','gif','mp3','wav','ogg','flac','aac','opus'],
     audio:        ['mp3','wav','ogg','flac','aac','opus'],
-    document:     { pdf:['html','extract-text','extract-images','extract-fonts'], docx:['pdf','html','txt','extract-text','extract-images'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text','extract-images'] },
+    document:     { pdf:['html','extract-text','extract-images','extract-fonts','watermark-pdf'], docx:['pdf','html','txt','extract-text','extract-images'], doc:['pdf','html','txt','extract-text'], odt:['pdf','html','txt','extract-text','extract-images'] },
     data:         ['json','csv','xml','yaml','toml','env'],
     config:       ['json','yaml','toml'],
     spreadsheet:  ['csv','json','xlsx'],
@@ -916,10 +916,13 @@ ipcMain.handle('file:convert', async (event, { filePath, outputFormat, options }
   // Fix mode: output suffix is _fixed, always mp4
   const isFix      = outputFormat === 'fix';
   const isExtract  = outputFormat.startsWith('extract');
+  const isWatermark = outputFormat === 'watermark-pdf';
 
   let outputPath;
   if (isFix) {
     outputPath = path.join(dir, `${base}_fixed.mp4`);
+  } else if (isWatermark) {
+    outputPath = path.join(dir, `${base}_watermarked.pdf`);
   } else if (isExtract) {
     // Extraction outputs to a folder
     outputPath = path.join(dir, `${base}_${outputFormat.replace('-','_')}`);
@@ -935,6 +938,8 @@ ipcMain.handle('file:convert', async (event, { filePath, outputFormat, options }
 
     if (isFix) {
       await fixForPlatform(filePath, outputPath, options, emit);
+    } else if (isWatermark) {
+      await watermarkPdf(filePath, outputPath, options, emit);
     } else if (outputFormat === 'extract-text') {
       await extractText(filePath, outputPath, ext, emit, options);
     } else if (outputFormat === 'extract-images') {
@@ -1618,6 +1623,54 @@ function escHtml(t) {
 // ═════════════════════════════════════════════════════════════════════════════
 //  NEW CONVERTERS
 // ═════════════════════════════════════════════════════════════════════════════
+
+// ── PDF Watermark ────────────────────────────────────────────────────────────
+async function watermarkPdf(input, output, options, emit) {
+  emit(10, 'Loading PDF…');
+  const { PDFDocument, StandardFonts, rgb, degrees } = r('pdf-lib');
+  const buf = fs.readFileSync(input);
+  const doc = await PDFDocument.load(buf, { ignoreEncryption: true });
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+
+  const text = options.watermarkText || 'WATERMARK';
+  const opacity = parseFloat(options.watermarkOpacity) || 0.15;
+  const pages = doc.getPages();
+
+  emit(30, `Applying watermark to ${pages.length} pages…`);
+
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    const { width, height } = page.getSize();
+
+    // Scale font size relative to page diagonal so it spans nicely
+    const diag = Math.sqrt(width * width + height * height);
+    const fontSize = Math.max(24, Math.min(diag / (text.length * 0.65), 120));
+    const textWidth = font.widthOfTextAtSize(text, fontSize);
+    const textHeight = font.heightAtSize(fontSize);
+
+    // Draw diagonally from bottom-left to top-right, centered
+    const angle = Math.atan2(height, width) * (180 / Math.PI);
+    const cx = width / 2;
+    const cy = height / 2;
+
+    page.drawText(text, {
+      x: cx - (textWidth / 2) * Math.cos(angle * Math.PI / 180) + (textHeight / 2) * Math.sin(angle * Math.PI / 180),
+      y: cy - (textWidth / 2) * Math.sin(angle * Math.PI / 180) - (textHeight / 2) * Math.cos(angle * Math.PI / 180),
+      size: fontSize,
+      font,
+      color: rgb(0.5, 0.5, 0.5),
+      opacity,
+      rotate: degrees(angle),
+    });
+
+    if (i % 10 === 0) emit(30 + Math.round((i / pages.length) * 60), `Page ${i + 1}/${pages.length}…`);
+  }
+
+  emit(92, 'Saving watermarked PDF…');
+  const watermarked = await doc.save();
+  fs.writeFileSync(output, watermarked);
+  emit(98, 'Done');
+}
 
 // ── Text Extraction (from anything) ──────────────────────────────────────────
 async function extractText(input, outputDir, ext, emit, options = {}) {

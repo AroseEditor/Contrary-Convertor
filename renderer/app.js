@@ -409,6 +409,7 @@ const FORMAT_DESC = {
   'extract-fonts':  'Extract embedded fonts',
   'extract':        'Extract archive contents',
   'remove-bg':      'AI background removal',
+  'watermark-pdf':  'Watermark PDF',
 };
 
 // --------------------------- Dropdown ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -437,6 +438,7 @@ function populateDropdown(info) {
     else if (['jpg','png','webp','avif','tiff','bmp','ico'].includes(fmt)) group = 'Image';
     else if (['txt','html','pdf'].includes(fmt)) group = 'Document';
     else if (fmt === 'remove-bg') group = 'Image';
+    else if (fmt === 'watermark-pdf') group = 'Document';
     if (!groups[group]) groups[group] = [];
     groups[group].push(fmt);
   });
@@ -547,10 +549,14 @@ function updateOptionsPanel(category, format, probe) {
   optFix.style.display   = 'none';
   const optExtract = $('opt-extract');
   if (optExtract) optExtract.style.display = 'none';
+  const optWatermark = $('opt-watermark');
+  if (optWatermark) optWatermark.style.display = 'none';
 
   const audioOnlyFmt = ['mp3','wav','ogg','flac','aac','opus'];
 
-  if (format === 'fix') {
+  if (format === 'watermark-pdf') {
+    if (optWatermark) optWatermark.style.display = 'flex';
+  } else if (format === 'fix') {
     optFix.style.display = 'flex';
   } else if (format === 'extract-text') {
     // Show Divide Pages option for text extraction
@@ -593,6 +599,15 @@ if (imgPresetSel) {
 }
 if (qualitySlider) {
   qualitySlider.addEventListener('input', () => { qualityDisplay.textContent = qualitySlider.value; });
+}
+
+// Watermark opacity slider
+const wmOpacitySlider = $('opt-watermark-opacity');
+const wmOpacityDisplay = $('watermark-opacity-display');
+if (wmOpacitySlider) {
+  wmOpacitySlider.addEventListener('input', () => {
+    wmOpacityDisplay.textContent = (wmOpacitySlider.value / 100).toFixed(2);
+  });
 }
 
 // --------------------------- Convert ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -665,6 +680,9 @@ function gatherOptions() {
   // Extraction
   o.dividePages = $('opt-divide-pages')?.checked || false;
   o.ocrImages = $('opt-ocr-images')?.checked || false;
+  // Watermark
+  o.watermarkText = $('opt-watermark-text')?.value || '';
+  o.watermarkOpacity = ($('opt-watermark-opacity')?.value || 15) / 100;
   return o;
 }
 

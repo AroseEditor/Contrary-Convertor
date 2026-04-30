@@ -1,5 +1,17 @@
 # Contrary Convertor — Updates
 
+## v1.6.0 (April 30, 2026)
+
+### 🔖 PDF Watermark
+- New **Watermark PDF** conversion option — appears when input is a PDF
+- Customizable watermark text via text input
+- Opacity slider (0.00–1.00, default 0.15) for subtle or bold stamps
+- Text is drawn diagonally across the center of every page, auto-scaled to page size
+- Output saved as `filename_watermarked.pdf` in the same directory
+- Uses pdf-lib for fast, dependency-free PDF manipulation
+
+---
+
 ## v1.5.2 (April 30, 2026)
 
 ### 🐛 Critical Fix — Conversion ENOENT crash
