@@ -393,29 +393,58 @@ ipcMain.handle('download:start', async (event, { url, savePath, threads, quality
   const emit = (data) => event.sender.send('download:progress', data);
   activeDownload = { cancelled: false, proc: null, requests: [] };
   try {
-    const isVideo = /(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com|twitter\.com|x\.com|facebook\.com|t\.me|telegram\.)/i.test(url);
-    if (isVideo) return await downloadWithYtdlp(url, savePath, emit, activeDownload, quality || '1080');
+    const isSpotify = /open\.spotify\.com/i.test(url);
+    const isYtdlpSource = /(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com|twitter\.com|x\.com|facebook\.com|t\.me|telegram\.|twitch\.tv|reddit\.com|vimeo\.com|soundcloud\.com)/i.test(url);
+    if (isSpotify) return await downloadWithSpotdl(url, savePath, emit, activeDownload);
+    else if (isYtdlpSource) return await downloadWithYtdlp(url, savePath, emit, activeDownload, quality || '1080');
     else return await downloadDirect(url, savePath, threads || 4, emit, activeDownload);
   } catch (err) { return { error: err.message }; }
 });
 
 async function downloadWithYtdlp(url, savePath, emit, dl, quality) {
   const ytdlpPath = await ensureYtdlp(emit);
-  emit({ percent: 5, message: 'Starting yt-dlp\u2026', speed: 0, downloaded: 0 });
+  const ffmpegBin  = getFFmpegPath();
+  emit({ percent: 5, message: 'Starting yt-dlp…', speed: 0, downloaded: 0 });
   return new Promise((resolve, reject) => {
     const outputTemplate = path.join(savePath, '%(title)s.%(ext)s');
-    // Build quality format string
-    let fmtArg;
-    switch (quality) {
-      case 'best':  fmtArg = 'bestvideo+bestaudio/best'; break;
-      case '1080':  fmtArg = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]'; break;
-      case '720':   fmtArg = 'bestvideo[height<=720]+bestaudio/best[height<=720]'; break;
-      case '480':   fmtArg = 'bestvideo[height<=480]+bestaudio/best[height<=480]'; break;
-      case '360':   fmtArg = 'bestvideo[height<=360]+bestaudio/best[height<=360]'; break;
-      case 'audio': fmtArg = 'bestaudio'; break;
-      default:      fmtArg = 'bestvideo[height<=1080]+bestaudio/best'; break;
+    const isAudio = quality === 'audio';
+
+    let args;
+    if (isAudio) {
+      // For audio: extract audio and convert to mp3 — do NOT use --merge-output-format
+      // bestaudio/best gives a single stream, then postprocess to mp3 via ffmpeg
+      args = [
+        '-f', 'bestaudio/best',
+        '-o', outputTemplate,
+        '--no-playlist',
+        '--newline', '--progress',
+        '--extract-audio',
+        '--audio-format', 'mp3',
+        '--audio-quality', '0',          // VBR best quality
+        '--ffmpeg-location', path.dirname(ffmpegBin),
+        url,
+      ];
+    } else {
+      let fmtArg;
+      switch (quality) {
+        case 'best': fmtArg = 'bestvideo+bestaudio/best'; break;
+        case '1080': fmtArg = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]'; break;
+        case '720':  fmtArg = 'bestvideo[height<=720]+bestaudio/best[height<=720]'; break;
+        case '480':  fmtArg = 'bestvideo[height<=480]+bestaudio/best[height<=480]'; break;
+        case '360':  fmtArg = 'bestvideo[height<=360]+bestaudio/best[height<=360]'; break;
+        default:     fmtArg = 'bestvideo[height<=1080]+bestaudio/best'; break;
+      }
+      args = [
+        '-f', fmtArg,
+        '-o', outputTemplate,
+        '--no-playlist',
+        '--newline', '--progress',
+        '--merge-output-format', 'mp4',
+        '--ffmpeg-location', path.dirname(ffmpegBin),
+        url,
+      ];
     }
-    const args = ['-f', fmtArg, '-o', outputTemplate, '--no-playlist', '--newline', '--progress', '--merge-output-format', quality === 'audio' ? 'mp3' : 'mp4', url];
+
     const proc = spawn(ytdlpPath, args, { cwd: savePath, shell: false });
     dl.proc = proc;
     let lastFile = '', stderr = '';
@@ -423,7 +452,7 @@ async function downloadWithYtdlp(url, savePath, emit, dl, quality) {
       for (const line of chunk.toString().split('\n')) {
         const m = line.match(/\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\s*\w+)\s+at\s+([\d.]+\s*\w+\/s)/);
         if (m) emit({ percent: parseFloat(m[1]), message: `Downloading: ${Math.round(parseFloat(m[1]))}%`, speed: parseSpeedToBytes(m[3]) });
-        const d = line.match(/\[(?:download|Merger)\].*?Destination:\s*(.+)/);
+        const d = line.match(/\[(?:download|Merger|ExtractAudio)\].*?Destination:\s*(.+)/);
         if (d) lastFile = d[1].trim();
         const mg = line.match(/\[Merger\]\s+Merging formats into "(.+?)"/);
         if (mg) lastFile = mg[1].trim();
@@ -432,13 +461,117 @@ async function downloadWithYtdlp(url, savePath, emit, dl, quality) {
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
     proc.on('close', (code) => {
       if (dl.cancelled) { resolve({ error: 'Download cancelled' }); return; }
-      if (code !== 0) { reject(new Error(stderr.slice(0, 200) || 'yt-dlp failed')); return; }
+      if (code !== 0) { reject(new Error(stderr.slice(0, 300) || 'yt-dlp failed')); return; }
       if (!lastFile) {
-        const files = fs.readdirSync(savePath).map(f => ({ name: f, time: fs.statSync(path.join(savePath, f)).mtimeMs })).sort((a, b) => b.time - a.time);
+        // Fall back: pick newest file in savePath
+        const files = fs.readdirSync(savePath)
+          .map(f => ({ name: f, time: fs.statSync(path.join(savePath, f)).mtimeMs }))
+          .sort((a, b) => b.time - a.time);
         if (files.length) lastFile = path.join(savePath, files[0].name);
       }
       if (lastFile && fs.existsSync(lastFile)) resolve({ filePath: lastFile, fileSize: fs.statSync(lastFile).size });
       else resolve({ filePath: savePath, fileSize: 0 });
+    });
+    proc.on('error', reject);
+  });
+}
+
+// ── Spotify download via spotdl ───────────────────────────────────────────────
+async function ensureSpotdl(emit) {
+  const { execSync } = require('child_process');
+
+  // Check system spotdl first
+  for (const cmd of ['spotdl', 'spotdl.exe']) {
+    try {
+      execSync(`${cmd} --version`, { stdio: 'pipe' });
+      return cmd;
+    } catch {}
+  }
+
+  // Fallback: ensure Python then pip install spotdl
+  emit({ percent: 2, message: 'Installing spotdl (first time)…', speed: 0 });
+  const pythonPath = await ensurePython((msg) => emit({ percent: 3, message: msg, speed: 0 }));
+  emit({ percent: 10, message: 'Installing spotdl via pip…', speed: 0 });
+  try {
+    await execPromise(`"${pythonPath}" -m pip install --no-cache-dir spotdl --no-warn-script-location`);
+  } catch (err) {
+    throw new Error(`Failed to install spotdl: ${err.message}`);
+  }
+
+  // After pip install, spotdl is available as a module
+  return `"${pythonPath}" -m spotdl`;
+}
+
+async function downloadWithSpotdl(url, savePath, emit, dl) {
+  emit({ percent: 2, message: 'Checking spotdl…', speed: 0 });
+  const spotdlCmd = await ensureSpotdl(emit);
+  const ffmpegBin = getFFmpegPath();
+
+  emit({ percent: 15, message: 'Starting Spotify download…', speed: 0 });
+  return new Promise((resolve, reject) => {
+    // spotdl downloads to cwd by default; output mp3 quality
+    const isModule = spotdlCmd.includes('-m spotdl');
+    let args, proc;
+
+    const spotArgs = [
+      'download', url,
+      '--output', path.join(savePath, '{title}.{output-ext}'),
+      '--format', 'mp3',
+      '--bitrate', '320k',
+      '--ffmpeg', ffmpegBin,
+    ];
+
+    if (isModule) {
+      // "python -m spotdl" — need to parse the command string
+      const parts = spotdlCmd.replace(/"/g, '').split(' ');
+      const pyExe = parts[0];
+      args = ['-m', 'spotdl', ...spotArgs];
+      proc = spawn(pyExe, args, { cwd: savePath, shell: false });
+    } else {
+      proc = spawn(spotdlCmd, spotArgs, { cwd: savePath, shell: false });
+    }
+
+    dl.proc = proc;
+    let lastFile = '', stderr = '', stdout = '';
+
+    const onLine = (line) => {
+      // spotdl outputs progress like: "Downloaded "Track Name""
+      if (line.includes('Downloaded')) {
+        emit({ percent: 90, message: line.trim().slice(0, 80), speed: 0 });
+      } else if (line.includes('Downloading')) {
+        emit({ percent: 50, message: line.trim().slice(0, 80), speed: 0 });
+      } else if (line.includes('Converting')) {
+        emit({ percent: 75, message: 'Converting to MP3…', speed: 0 });
+      }
+    };
+
+    proc.stdout.on('data', (chunk) => {
+      const txt = chunk.toString();
+      stdout += txt;
+      txt.split('\n').forEach(onLine);
+    });
+    proc.stderr.on('data', (d) => {
+      const txt = d.toString();
+      stderr += txt;
+      txt.split('\n').forEach(onLine);
+    });
+    proc.on('close', (code) => {
+      if (dl.cancelled) { resolve({ error: 'Download cancelled' }); return; }
+      if (code !== 0) {
+        const errMsg = (stderr + stdout).slice(0, 300) || 'spotdl failed';
+        reject(new Error(errMsg)); return;
+      }
+      // Find newest mp3 in savePath
+      const files = fs.readdirSync(savePath)
+        .filter(f => f.endsWith('.mp3'))
+        .map(f => ({ name: f, time: fs.statSync(path.join(savePath, f)).mtimeMs }))
+        .sort((a, b) => b.time - a.time);
+      if (files.length) {
+        lastFile = path.join(savePath, files[0].name);
+        resolve({ filePath: lastFile, fileSize: fs.statSync(lastFile).size });
+      } else {
+        resolve({ filePath: savePath, fileSize: 0 });
+      }
     });
     proc.on('error', reject);
   });

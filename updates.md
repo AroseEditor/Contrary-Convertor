@@ -1,5 +1,22 @@
 # Contrary Convertor — Updates
 
+## v1.8.0 (May 28, 2026)
+
+### 🎵 YouTube MP3 Fix
+- Fixed **"invalid merge output format"** error when downloading YouTube videos as MP3
+- Root cause: `--merge-output-format mp3` is invalid — ffmpeg can only merge into container formats
+- Fix: switched to `--extract-audio --audio-format mp3 --audio-quality 0` for audio downloads (VBR best)
+- Added `--ffmpeg-location` flag so yt-dlp uses the app-bundled ffmpeg binary reliably
+
+### 🎧 Spotify Download Support
+- Paste any Spotify track, album, or playlist URL and download as **MP3 @ 320k**
+- Uses **spotdl** — auto-installed silently via pip on first use (leverages the existing Python auto-installer)
+- Format picker auto-locks to MP3 when a Spotify URL is detected
+- UI badge shows `Spotify • via spotdl • MP3 • 320k` on paste
+- Works for tracks, albums, playlists, and artist pages
+
+---
+
 ## v1.7.0 (May 22, 2026)
 
 ### 🔊 AI & DSP Background Noise Removal

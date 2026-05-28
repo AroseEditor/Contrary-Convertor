@@ -177,6 +177,18 @@ downloadHint.addEventListener('click', () => {
 downloadUrl.addEventListener('input', () => {
   const url = downloadUrl.value.trim();
   downloadSource.innerHTML = url ? detectSourceHtml(url) : '';
+  // Auto-select MP3 for Spotify URLs, restore for others
+  const fmtSel = $('download-format');
+  if (fmtSel) {
+    if (/open\.spotify\.com/i.test(url)) {
+      fmtSel.value = 'mp3';
+      fmtSel.disabled = true;
+      fmtSel.title = 'Spotify always downloads as MP3';
+    } else {
+      fmtSel.disabled = false;
+      fmtSel.title = 'Download format';
+    }
+  }
 });
 
 downloadBack.addEventListener('click', () => {
@@ -223,7 +235,9 @@ async function startDownload() {
 
   try {
     const dlFormat = $('download-format')?.value || 'mp4';
-    const quality = dlFormat === 'mp3' ? 'audio' : state.ytdlpQuality;
+    const isSpotify = /open\.spotify\.com/i.test(url);
+    // Spotify always routes to spotdl — quality param unused but send 'audio' anyway
+    const quality = (isSpotify || dlFormat === 'mp3') ? 'audio' : state.ytdlpQuality;
     const result = await window.electronAPI.downloadUrl({ url, savePath, threads: state.threads, quality });
     if (result.error) {
       dlProgressLabel.textContent = '... ' + result.error.slice(0, 80);
@@ -919,16 +933,17 @@ function esc(str) {
 
 function detectSourceHtml(url) {
   const sources = [
-    { pattern: /youtube\.com|youtu\.be/i,   name: 'YouTube',   method: 'yt-dlp' },
-    { pattern: /instagram\.com/i,           name: 'Instagram', method: 'yt-dlp' },
-    { pattern: /t\.me|telegram\./i,         name: 'Telegram',  method: 'yt-dlp' },
-    { pattern: /tiktok\.com/i,              name: 'TikTok',    method: 'yt-dlp' },
-    { pattern: /twitter\.com|x\.com/i,      name: 'Twitter/X', method: 'yt-dlp' },
-    { pattern: /facebook\.com|fb\.watch/i,  name: 'Facebook',  method: 'yt-dlp' },
-    { pattern: /twitch\.tv/i,               name: 'Twitch',    method: 'yt-dlp' },
-    { pattern: /reddit\.com/i,              name: 'Reddit',    method: 'yt-dlp' },
-    { pattern: /vimeo\.com/i,               name: 'Vimeo',     method: 'yt-dlp' },
-    { pattern: /soundcloud\.com/i,          name: 'SoundCloud', method: 'yt-dlp' },
+    { pattern: /youtube\.com|youtu\.be/i,       name: 'YouTube',   method: 'yt-dlp' },
+    { pattern: /open\.spotify\.com/i,           name: 'Spotify',   method: 'spotdl', alwaysMp3: true },
+    { pattern: /instagram\.com/i,               name: 'Instagram', method: 'yt-dlp' },
+    { pattern: /t\.me|telegram\./i,             name: 'Telegram',  method: 'yt-dlp' },
+    { pattern: /tiktok\.com/i,                  name: 'TikTok',    method: 'yt-dlp' },
+    { pattern: /twitter\.com|x\.com/i,          name: 'Twitter/X', method: 'yt-dlp' },
+    { pattern: /facebook\.com|fb\.watch/i,      name: 'Facebook',  method: 'yt-dlp' },
+    { pattern: /twitch\.tv/i,                   name: 'Twitch',    method: 'yt-dlp' },
+    { pattern: /reddit\.com/i,                  name: 'Reddit',    method: 'yt-dlp' },
+    { pattern: /vimeo\.com/i,                   name: 'Vimeo',     method: 'yt-dlp' },
+    { pattern: /soundcloud\.com/i,              name: 'SoundCloud', method: 'yt-dlp' },
   ];
 
   const match = sources.find(s => s.pattern.test(url));
@@ -937,9 +952,13 @@ function detectSourceHtml(url) {
   if (match) {
     html += `<span class="download-source-tag">${match.name}</span>`;
     html += `<span class="download-source-tag">via ${match.method}</span>`;
-    const q = state.ytdlpQuality;
-    const qLabel = q === 'best' ? 'Lossless' : q === 'audio' ? 'Audio Only' : q + 'p';
-    html += `<span class="download-source-tag">${qLabel}</span>`;
+    if (match.alwaysMp3) {
+      html += `<span class="download-source-tag">MP3 • 320k</span>`;
+    } else {
+      const q = state.ytdlpQuality;
+      const qLabel = q === 'best' ? 'Lossless' : q === 'audio' ? 'Audio Only' : q + 'p';
+      html += `<span class="download-source-tag">${qLabel}</span>`;
+    }
   } else {
     // Detect file type from extension
     try {
