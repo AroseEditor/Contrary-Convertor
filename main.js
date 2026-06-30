@@ -401,21 +401,35 @@ ipcMain.on('download:cancel', () => {
   }
 });
 
-ipcMain.handle('download:start', async (event, { url, savePath, threads, quality }) => {
+ipcMain.handle('download:start', async (event, { url, savePath, threads, quality, cookies }) => {
   const emit = (data) => event.sender.send('download:progress', data);
   activeDownload = { cancelled: false, proc: null, requests: [] };
   try {
     const isSpotify = /open\.spotify\.com/i.test(url);
     const isYtdlpSource = /(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com|twitter\.com|x\.com|facebook\.com|t\.me|telegram\.|twitch\.tv|reddit\.com|vimeo\.com|soundcloud\.com)/i.test(url);
     if (isSpotify) return await downloadWithSpotdl(url, savePath, emit, activeDownload);
-    else if (isYtdlpSource) return await downloadWithYtdlp(url, savePath, emit, activeDownload, quality || '1080');
+    else if (isYtdlpSource) return await downloadWithYtdlp(url, savePath, emit, activeDownload, quality || '1080', cookies);
     else return await downloadDirect(url, savePath, threads || 4, emit, activeDownload);
   } catch (err) { return { error: err.message }; }
 });
 
-async function downloadWithYtdlp(url, savePath, emit, dl, quality) {
+// Cookies (Netscape cookies.txt) for login-gated sites (Instagram, etc.).
+// Once pasted, they're saved here and reused automatically for later downloads.
+function getSavedCookiesPath() {
+  return path.join(app.getPath('userData'), 'yt-cookies.txt');
+}
+
+async function downloadWithYtdlp(url, savePath, emit, dl, quality, cookies) {
   const ytdlpPath = await ensureYtdlp(emit);
   const ffmpegBin  = getFFmpegPath();
+
+  // Persist freshly-pasted cookies; reuse previously saved ones automatically.
+  const cookiesPath = getSavedCookiesPath();
+  if (cookies && cookies.trim()) {
+    try { fs.writeFileSync(cookiesPath, cookies.trim() + '\n', 'utf8'); } catch {}
+  }
+  const haveCookies = fs.existsSync(cookiesPath);
+
   emit({ percent: 5, message: 'Starting yt-dlp…', speed: 0, downloaded: 0 });
   return new Promise((resolve, reject) => {
     const outputTemplate = path.join(savePath, '%(title)s.%(ext)s');
@@ -457,6 +471,9 @@ async function downloadWithYtdlp(url, savePath, emit, dl, quality) {
       ];
     }
 
+    // Authenticate with the user's saved cookies for login-gated sites.
+    if (haveCookies) args.unshift('--cookies', cookiesPath);
+
     const proc = spawn(ytdlpPath, args, { cwd: savePath, shell: false });
     dl.proc = proc;
     let lastFile = '', stderr = '';
@@ -473,7 +490,14 @@ async function downloadWithYtdlp(url, savePath, emit, dl, quality) {
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
     proc.on('close', (code) => {
       if (dl.cancelled) { resolve({ error: 'Download cancelled' }); return; }
-      if (code !== 0) { reject(new Error(stderr.slice(0, 300) || 'yt-dlp failed')); return; }
+      if (code !== 0) {
+        const msg = stderr.slice(0, 300) || 'yt-dlp failed';
+        // Login-gated failure (Instagram, private/age-restricted, rate limit) →
+        // tell the renderer to prompt the user for their cookies.txt.
+        const needsCookies = /empty media response|login required|log in|sign in to confirm|rate.?limit|requested content is not available|private|--cookies|requires authentication|account/i.test(stderr);
+        resolve({ error: msg, needsCookies });
+        return;
+      }
       if (!lastFile) {
         // Fall back: pick newest file in savePath
         const files = fs.readdirSync(savePath)

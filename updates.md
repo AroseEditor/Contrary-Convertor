@@ -1,5 +1,15 @@
 # Contrary Convertor — Updates
 
+## v1.10.0 (June 30, 2026)
+
+### Instagram / Login-Gated Downloads (cookies.txt)
+- Fixes Instagram's "sent an empty media response" error — these sites now require a logged-in session
+- When a download fails because the site needs login, a popup explains the fix and lets you paste your `cookies.txt`
+- One-click link to the free "Get cookies.txt LOCALLY" browser extension with step-by-step instructions
+- After pasting once, cookies are saved and reused automatically for all future downloads (Instagram, etc.)
+- The failed download retries instantly with your login — no need to re-enter the URL
+- Cookies never leave your PC; nothing is uploaded
+
 ## v1.9.1 (June 30, 2026)
 
 ### yt-dlp Auto-Refresh (bug fix)

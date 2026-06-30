@@ -238,7 +238,19 @@ async function startDownload() {
     const isSpotify = /open\.spotify\.com/i.test(url);
     // Spotify always routes to spotdl — quality param unused but send 'audio' anyway
     const quality = (isSpotify || dlFormat === 'mp3') ? 'audio' : state.ytdlpQuality;
-    const result = await window.electronAPI.downloadUrl({ url, savePath, threads: state.threads, quality });
+    let result = await window.electronAPI.downloadUrl({ url, savePath, threads: state.threads, quality });
+
+    // Login-gated site (e.g. Instagram) → ask the user to paste their cookies.txt, then retry once.
+    if (result && result.needsCookies) {
+      const cookies = await promptForCookies();
+      if (cookies) {
+        dlProgressBar.style.width = '5%';
+        dlProgressPct.textContent = '5%';
+        dlProgressLabel.textContent = 'Retrying with your login…';
+        result = await window.electronAPI.downloadUrl({ url, savePath, threads: state.threads, quality, cookies });
+      }
+    }
+
     if (result.error) {
       dlProgressLabel.textContent = '... ' + result.error.slice(0, 80);
       dlSpeed.textContent = 'Error';
@@ -266,6 +278,50 @@ async function startDownload() {
 
   state.downloading = false;
   window.electronAPI.removeDownloadListener();
+}
+
+// Modal: ask the user to paste their cookies.txt to authenticate login-gated downloads.
+// Resolves with the pasted cookie text, or null if cancelled.
+function promptForCookies() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'cookie-modal-overlay';
+    overlay.innerHTML = `
+      <div class="cookie-modal">
+        <h3>🔒 This site needs your login</h3>
+        <p>Instagram (and some other sites) block anonymous downloads. Paste your
+        <b>cookies.txt</b> to download using your own logged-in session.
+        Nothing is uploaded — your cookies stay on this PC.</p>
+        <ol>
+          <li>Install the free <a href="#" id="cookie-ext-link">“Get cookies.txt LOCALLY”</a> extension</li>
+          <li>Open the site (e.g. <b>instagram.com</b>) while logged in, then click the extension</li>
+          <li>Click <b>Export</b> to copy the cookies</li>
+          <li>Paste them below and click Continue</li>
+        </ol>
+        <textarea id="cookie-textarea" spellcheck="false" placeholder="# Netscape HTTP Cookie File&#10;.instagram.com  TRUE  /  TRUE  ..."></textarea>
+        <div class="cookie-modal-actions">
+          <button id="cookie-cancel" class="cookie-btn-secondary">Cancel</button>
+          <button id="cookie-continue" class="cookie-btn-primary">Continue &amp; Download</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const ta = overlay.querySelector('#cookie-textarea');
+    ta.focus();
+
+    const cleanup = (val) => { overlay.remove(); resolve(val); };
+    overlay.querySelector('#cookie-ext-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.electronAPI.openExternal('https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc');
+    });
+    overlay.querySelector('#cookie-cancel').addEventListener('click', () => cleanup(null));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    overlay.querySelector('#cookie-continue').addEventListener('click', () => {
+      const txt = ta.value.trim();
+      if (!txt) { ta.focus(); ta.classList.add('cookie-error'); return; }
+      cleanup(txt);
+    });
+  });
 }
 
 dlCancelBtn.addEventListener('click', () => {
